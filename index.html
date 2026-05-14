@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bombi VN Guessr – Thử thách địa lý Việt Nam</title>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="game-container">
+
+    <!-- ── Token Setup Screen ── -->
+    <div id="token-screen" class="overlay active">
+        <div class="overlay-content">
+            <div class="logo-emoji">🗺️</div>
+            <h1>Bombi VN Guessr</h1>
+            <p>Nhập <strong>Google Maps API Key</strong> để xem ảnh đường phố thực tế</p>
+            <div class="token-form">
+                <input type="text" id="token-input" placeholder="AIzaSy..." autocomplete="off">
+                <button id="btn-save-token" class="btn-primary">Kích hoạt & Tiếp tục →</button>
+            </div>
+            <p class="hint-text">
+                Lấy Key tại →
+                <a href="https://console.cloud.google.com/google/maps-apis/credentials" target="_blank" rel="noopener">Google Cloud Console</a><br>
+                Bật <em>Maps JavaScript API</em> & <em>Street View Static API</em>
+            </p>
+        </div>
+    </div>
+
+    <!-- ── Start Screen ── -->
+    <div id="start-screen" class="overlay">
+        <div class="overlay-content">
+            <div class="logo-emoji">🇻🇳</div>
+            <h1>Bombi VN Guessr</h1>
+            <p>Nhận ra đường phố Việt Nam qua ảnh thực tế?</p>
+            <div class="mode-selection">
+                <button class="btn-mode" data-city="Hanoi">🏛️ Hà Nội</button>
+                <button class="btn-mode" data-city="Saigon">🌆 Sài Gòn</button>
+                <button class="btn-mode" data-city="Mixed">🔀 Cả hai</button>
+            </div>
+            <p class="hint-text">Chế độ Vô tận · Google Street View · Đoán trên bản đồ</p>
+            <button id="btn-change-token" class="btn-text">⚙️ Đổi API Key</button>
+        </div>
+    </div>
+
+    <!-- ── HUD ── -->
+    <div id="hud" style="display:none;">
+        <div class="hud-item">
+            <span class="hud-label">Vòng</span>
+            <span id="current-round">1</span>
+        </div>
+        <div class="hud-item">
+            <span class="hud-label">Điểm</span>
+            <span id="total-score">0</span>
+        </div>
+        <div class="hud-item city-badge" id="city-badge">–</div>
+        <button id="btn-quit" class="btn-icon" title="Thoát game">✖</button>
+    </div>
+
+    <!-- ── Google Street View Viewer ── -->
+    <div id="street-view">
+        <div id="loading-view" class="loading-view">
+            <div class="spinner"></div>
+            <p id="loading-text">Đang tải ảnh đường phố...</p>
+        </div>
+    </div>
+
+    <!-- ── Guess Map ── -->
+    <div id="map-container">
+        <div id="map-header">📍 Bấm bản đồ để đoán vị trí</div>
+        <div id="map"></div>
+        <div class="map-controls">
+            <button id="btn-guess" class="btn-primary" disabled>Đoán ngay!</button>
+        </div>
+    </div>
+
+    <!-- ── Result Overlay ── -->
+    <div id="result-overlay" class="overlay">
+        <div class="overlay-content result-content">
+            <div id="result-score-badge">+<span id="result-score">0</span></div>
+            <h2 id="result-title">Kết quả</h2>
+            <div class="result-stats">
+                <div class="stat-card">
+                    <span class="stat-value" id="result-distance">–</span>
+                    <span class="stat-label">km từ vị trí đúng</span>
+                </div>
+                <div class="stat-card accent">
+                    <span class="stat-value" id="result-score2">0</span>
+                    <span class="stat-label">/ 5000 điểm</span>
+                </div>
+            </div>
+            <div class="result-location-info">
+                <span class="location-icon">📌</span>
+                <div>
+                    <div id="result-landmark-name" class="landmark-name">–</div>
+                    <div id="result-landmark-desc" class="landmark-desc">–</div>
+                </div>
+            </div>
+            <div id="result-map"></div>
+            <button id="btn-next" class="btn-primary">
+                <span id="btn-next-text">Tiếp theo →</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- ── Final Screen ── -->
+    <div id="final-screen" class="overlay">
+        <div class="overlay-content">
+            <div class="trophy">🏆</div>
+            <h1>Hoàn thành!</h1>
+            <div class="final-score-display">
+                <span id="final-total-score">0</span>
+                <label>/ 25,000 điểm</label>
+            </div>
+            <div id="final-rating" class="final-rating">–</div>
+            <button id="btn-restart" class="btn-primary">Chơi lại</button>
+        </div>
+    </div>
+
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="locations.js"></script>
+<script src="game.js"></script>
+</body>
+</html>

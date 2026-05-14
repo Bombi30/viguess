@@ -1,0 +1,372 @@
+/* ViGuessr – style.css (Google Street View edition) */
+:root {
+  --bg:           #0a0a0f;
+  --accent:       #7c3aed;
+  --accent-light: #a855f7;
+  --accent-glow:  rgba(124, 58, 237, 0.35);
+  --text:         #ffffff;
+  --text-dim:     rgba(255,255,255,0.6);
+  --glass:        rgba(10,10,20,0.78);
+  --glass-border: rgba(255,255,255,0.12);
+  --card-radius:  16px;
+}
+
+*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  overflow: hidden;
+}
+
+a { color: var(--accent-light); }
+
+/* ── Game Container ─────────────────────────────────────────────────────── */
+#game-container {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── Street View (Google fills entire bg) ──────────────────────────────── */
+#street-view {
+  position: absolute;
+  inset: 0;
+  background: #050508;
+}
+
+/* ── Loading overlay ────────────────────────────────────────────────────── */
+.loading-view {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5,5,10,0.92);
+  gap: 16px;
+  z-index: 10;
+  font-size: 1rem;
+  color: var(--text-dim);
+}
+
+.spinner {
+  width: 44px; height: 44px;
+  border: 3px solid var(--glass-border);
+  border-top-color: var(--accent-light);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Overlays (start / result / final / token) ──────────────────────────── */
+.overlay {
+  display: none;
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5,5,12,0.88);
+  backdrop-filter: blur(16px);
+}
+.overlay.active { display: flex; }
+
+.overlay-content {
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--card-radius);
+  padding: 44px 48px;
+  max-width: 480px;
+  width: 90%;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  box-shadow: 0 0 60px rgba(124,58,237,0.2);
+}
+
+.logo-emoji { font-size: 3.5rem; line-height: 1; }
+.trophy     { font-size: 4rem; line-height: 1; }
+
+.overlay-content h1 {
+  font-size: 2rem;
+  font-weight: 800;
+  background: linear-gradient(135deg, #fff 40%, var(--accent-light));
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.overlay-content p { color: var(--text-dim); font-size: 0.95rem; }
+
+.hint-text { font-size: 0.8rem; color: rgba(255,255,255,0.4); line-height: 1.5; }
+
+/* Mode buttons */
+.mode-selection {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.btn-mode {
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding: 12px 20px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-mode:hover {
+  background: rgba(124,58,237,0.25);
+  border-color: var(--accent);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px var(--accent-glow);
+}
+
+/* Primary button */
+.btn-primary {
+  background: linear-gradient(135deg, var(--accent), var(--accent-light));
+  border: none;
+  border-radius: 12px;
+  color: #fff;
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  padding: 14px 32px;
+  cursor: pointer;
+  transition: all 0.2s;
+  width: 100%;
+  max-width: 320px;
+}
+.btn-primary:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 32px var(--accent-glow);
+}
+.btn-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-text {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.35);
+  font-family: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+.btn-text:hover { color: var(--text-dim); }
+
+/* ── Token Form ─────────────────────────────────────────────────────────── */
+.token-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.token-form input {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  color: var(--text);
+  font-family: monospace;
+  font-size: 0.85rem;
+  padding: 12px 14px;
+  outline: none;
+  transition: border-color 0.2s;
+  width: 100%;
+}
+.token-form input:focus { border-color: var(--accent); }
+.token-form input::placeholder { color: rgba(255,255,255,0.25); }
+
+/* ── HUD ────────────────────────────────────────────────────────────────── */
+#hud {
+  position: absolute;
+  top: 16px; left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  border-radius: 100px;
+  padding: 8px 16px;
+  backdrop-filter: blur(12px);
+}
+
+.hud-item {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.hud-item span:not(.hud-label):not(.hud-sep) {
+  color: var(--text);
+  font-weight: 800;
+  font-size: 1rem;
+}
+.hud-label { font-size: 0.7rem; font-weight: 500; }
+.hud-sep   { opacity: 0.4; }
+
+.city-badge {
+  background: rgba(124,58,237,0.3);
+  border: 1px solid var(--accent);
+  border-radius: 100px;
+  padding: 4px 12px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.btn-icon {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--glass-border);
+  border-radius: 50%;
+  width: 30px; height: 30px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-icon:hover { background: rgba(255,60,60,0.2); color: #ff6060; }
+
+/* ── Guess Map ──────────────────────────────────────────────────────────── */
+#map-container {
+  position: absolute;
+  bottom: 20px; right: 20px;
+  z-index: 50;
+  width: 320px;
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--card-radius);
+  overflow: hidden;
+  backdrop-filter: blur(10px);
+  transition: width 0.3s, box-shadow 0.3s;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+#map-container:hover {
+  width: 420px;
+  box-shadow: 0 16px 48px rgba(0,0,0,0.6);
+}
+
+#map-header {
+  padding: 9px 14px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--glass-border);
+  background: rgba(255,255,255,0.03);
+}
+
+#map { height: 220px; }
+
+.map-controls {
+  padding: 10px;
+}
+.map-controls .btn-primary {
+  padding: 10px 16px;
+  font-size: 0.9rem;
+  max-width: 100%;
+}
+
+/* Map pin icons */
+.map-pin {
+  font-size: 24px;
+  line-height: 1;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.6));
+}
+
+/* ── Result Overlay ─────────────────────────────────────────────────────── */
+.result-content { gap: 14px; max-width: 520px; }
+
+#result-score-badge {
+  font-size: 2.4rem;
+  font-weight: 900;
+  background: linear-gradient(135deg, #f59e0b, #f97316);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.result-content h2 { font-size: 1.5rem; font-weight: 700; }
+
+.result-stats {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+  justify-content: center;
+}
+
+.stat-card {
+  flex: 1;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  padding: 14px 12px;
+  text-align: center;
+}
+.stat-card.accent { border-color: var(--accent); background: rgba(124,58,237,0.15); }
+
+.stat-value { display: block; font-size: 1.5rem; font-weight: 800; }
+.stat-label { display: block; font-size: 0.72rem; color: var(--text-dim); margin-top: 4px; }
+
+.result-location-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  padding: 14px;
+  text-align: left;
+  width: 100%;
+}
+.location-icon { font-size: 1.4rem; }
+.landmark-name { font-weight: 700; font-size: 0.95rem; }
+.landmark-desc { font-size: 0.8rem; color: var(--text-dim); margin-top: 3px; }
+
+/* ── Final Screen ───────────────────────────────────────────────────────── */
+.final-score-display {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.final-score-display span {
+  font-size: 3.5rem;
+  font-weight: 900;
+  background: linear-gradient(135deg, #f59e0b, #f97316);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.final-score-display label { color: var(--text-dim); font-size: 0.9rem; }
+
+.final-rating {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--accent-light);
+}
+
+/* ── Leaflet overrides ──────────────────────────────────────────────────── */
+.leaflet-control-zoom a {
+  background: var(--glass) !important;
+  color: var(--text) !important;
+  border-color: var(--glass-border) !important;
+}
+.leaflet-control-zoom a:hover {
+  background: rgba(124,58,237,0.3) !important;
+}
