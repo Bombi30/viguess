@@ -7,7 +7,7 @@
   const MAX_DIST_KM     = 50;
 
   // ── State ─────────────────────────────────────────────────────────────────
-  let apiKey        = localStorage.getItem('gmaps_api_key') || 'AIzaSyBjgn8EZeJRh8sYRkfQHgmzIFQgpv2yuGA';
+  let apiKey        = localStorage.getItem('gmaps_api_key') || 'AIzaSyB2mM4F8GwDQe0OeAHk2iju2hxuMyhmWpI';
   let panorama      = null;
   let svService     = null;
   let guessMap      = null;
@@ -114,7 +114,11 @@
     if (!val) { alert('Vui lòng nhập Google Maps API Key!'); return; }
     apiKey = val;
     localStorage.setItem('gmaps_api_key', val);
-    loadGoogleMaps(apiKey);
+    if (gmapsLoaded) {
+      showScreen('start');
+    } else {
+      loadGoogleMaps(apiKey);
+    }
   }
 
   // ── Game Flow ─────────────────────────────────────────────────────────────
@@ -211,22 +215,7 @@
     const score    = calcScore(distKm);
     totalScore    += score;
 
-    // Draw line between guess and actual
-    resultLine = L.polyline([guessLL, actualLL], {
-      color: '#f59e0b', weight: 2, dashArray: '6, 4',
-    }).addTo(guessMap);
-
-    // Show actual marker
-    L.marker(actualLL, {
-      icon: L.divIcon({
-        className: '', iconSize: [32, 32], iconAnchor: [16, 32],
-        html: '<div class="map-pin actual">📍</div>',
-      })
-    }).addTo(guessMap);
-
-    guessMap.fitBounds(L.latLngBounds([guessLL, actualLL]), { padding: [30, 30] });
-
-    showResult(distKm, score);
+    showResult(distKm, score, guessLL, actualLL);
   }
 
   function calcScore(distKm) {
@@ -234,7 +223,7 @@
     return Math.min(MAX_SCORE, Math.round(MAX_SCORE * Math.exp(-distKm / 5)));
   }
 
-  function showResult(distKm, score) {
+  function showResult(distKm, score, guessLL, actualLL) {
     $('result-score').textContent    = score.toLocaleString();
     $('result-score2').textContent   = score.toLocaleString();
     $('result-title').textContent    = getRating(score);
@@ -248,6 +237,65 @@
 
     updateHUD();
     showScreen('result');
+
+    // Build the result map showing guess vs actual
+    initResultMap(guessLL, actualLL, distKm);
+  }
+
+  function initResultMap(guessLL, actualLL, distKm) {
+    // Destroy previous result map
+    if (resultMap) { resultMap.remove(); resultMap = null; }
+
+    resultMap = L.map('result-map', {
+      zoomControl: true,
+      attributionControl: false,
+      dragging: true,
+      scrollWheelZoom: true,
+    });
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+    }).addTo(resultMap);
+
+    // Guess marker (red)
+    L.marker(guessLL, {
+      icon: L.divIcon({
+        className: '', iconSize: [28, 28], iconAnchor: [14, 28],
+        html: '<div class="result-pin guess-pin">🔴</div>',
+      })
+    }).addTo(resultMap).bindTooltip('Bạn đoán', { permanent: false, direction: 'top' });
+
+    // Actual marker (green)
+    L.marker(actualLL, {
+      icon: L.divIcon({
+        className: '', iconSize: [28, 28], iconAnchor: [14, 28],
+        html: '<div class="result-pin actual-pin">🟢</div>',
+      })
+    }).addTo(resultMap).bindTooltip('Vị trí đúng', { permanent: false, direction: 'top' });
+
+    // Dashed line between them
+    L.polyline([guessLL, actualLL], {
+      color: '#3b82f6', weight: 3, dashArray: '8, 6',
+      opacity: 0.9,
+    }).addTo(resultMap);
+
+    // Distance label at midpoint
+    const midLat = (guessLL.lat + actualLL.lat) / 2;
+    const midLng = (guessLL.lng + actualLL.lng) / 2;
+    const distText = distKm < 1
+      ? `${Math.round(distKm * 1000)} m`
+      : `${distKm.toFixed(1)} km`;
+    L.marker([midLat, midLng], {
+      icon: L.divIcon({
+        className: 'distance-label',
+        html: `<span>${distText}</span>`,
+        iconSize: [80, 24],
+        iconAnchor: [40, 12],
+      })
+    }).addTo(resultMap);
+
+    // Fit both markers into view
+    resultMap.fitBounds(L.latLngBounds([guessLL, actualLL]), { padding: [40, 40] });
   }
 
   function nextRound() {
@@ -310,7 +358,7 @@
       attributionControl: false,
     });
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
       maxZoom: 19,
     }).addTo(guessMap);
 
