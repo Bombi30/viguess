@@ -248,7 +248,21 @@
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
                 { urls: 'stun:stun1.l.google.com:19302' },
-                { urls: 'stun:stun2.l.google.com:19302' }
+                {
+                    urls: "turn:openrelay.metered.ca:80",
+                    username: "openrelayproject",
+                    credential: "openrelayproject"
+                },
+                {
+                    urls: "turn:openrelay.metered.ca:443",
+                    username: "openrelayproject",
+                    credential: "openrelayproject"
+                },
+                {
+                    urls: "turn:openrelay.metered.ca:443?transport=tcp",
+                    username: "openrelayproject",
+                    credential: "openrelayproject"
+                }
             ]
         }
     });
@@ -286,7 +300,21 @@
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
                 { urls: 'stun:stun1.l.google.com:19302' },
-                { urls: 'stun:stun2.l.google.com:19302' }
+                {
+                    urls: "turn:openrelay.metered.ca:80",
+                    username: "openrelayproject",
+                    credential: "openrelayproject"
+                },
+                {
+                    urls: "turn:openrelay.metered.ca:443",
+                    username: "openrelayproject",
+                    credential: "openrelayproject"
+                },
+                {
+                    urls: "turn:openrelay.metered.ca:443?transport=tcp",
+                    username: "openrelayproject",
+                    credential: "openrelayproject"
+                }
             ]
         }
     });
@@ -558,53 +586,61 @@
     } catch(e) {}
 
     if (!cachedIds || cachedIds.length === 0) {
-      el.loadingText.textContent = 'Đang thu thập các góc ảnh quanh đây...';
-      const delta = 0.0005; // ~50m
-      const bbox = `${loc.lng - delta},${loc.lat - delta},${loc.lng + delta},${loc.lat + delta}`;
-      const url = `https://graph.mapillary.com/images?access_token=${mlyToken}&fields=id,geometry,is_pano&bbox=${bbox}&limit=50`;
+      el.loadingText.textContent = 'Đang mở rộng tìm kiếm ảnh quanh đây...';
       
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      const deltas = [0.0005, 0.002, 0.01]; // Tương đương ~50m, ~200m, ~1km
+      let foundData = null;
 
-      try {
-        const res = await fetch(url, { signal: controller.signal });
-        clearTimeout(timeoutId);
-        const data = await res.json();
-        
-        if (data && data.data && data.data.length > 0) {
-          let panos = data.data.filter(img => img.is_pano === true);
-          let flats = data.data.filter(img => img.is_pano !== true);
+      for (const delta of deltas) {
+          const bbox = `${loc.lng - delta},${loc.lat - delta},${loc.lng + delta},${loc.lat + delta}`;
+          const url = `https://graph.mapillary.com/images?access_token=${mlyToken}&fields=id,geometry,is_pano&bbox=${bbox}&limit=50`;
           
-          const actualLL = L.latLng(loc.lat, loc.lng);
-          const sortByDist = (a, b) => {
-             const da = actualLL.distanceTo(L.latLng(a.geometry.coordinates[1], a.geometry.coordinates[0]));
-             const db = actualLL.distanceTo(L.latLng(b.geometry.coordinates[1], b.geometry.coordinates[0]));
-             return da - db;
-          };
-          panos.sort(sortByDist);
-          flats.sort(sortByDist);
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 6000); // 6s timeout cho mỗi lần fetch
 
-          // Trộn ngẫu nhiên: ưu tiên lấy top 7 pano và top 3 flat gần nhất
-          const mixed = [...panos.slice(0, 7), ...flats.slice(0, 3)];
-          cachedIds = mixed.map(img => img.id);
-          
-          if (cachedIds.length === 0) throw new Error('Không tìm thấy ảnh nào trong khu vực này');
-          
-          // Lưu mảng ID vào Cache
-          localStorage.setItem('mly_cache_v2_' + loc.id, JSON.stringify({
-            ids: cachedIds,
-            ts: Date.now()
-          }));
-        } else {
-          throw new Error('No images found');
-        }
-      } catch (err) {
-        clearTimeout(timeoutId);
-        console.error('Mapillary error:', err);
-        el.loadingText.textContent = '⚠️ Không tìm thấy ảnh Mapillary tại đây, đang bỏ qua...';
-        setTimeout(() => { if (gameActive) nextRound(); }, 2500);
-        return;
+          try {
+              const res = await fetch(url, { signal: controller.signal });
+              clearTimeout(timeoutId);
+              const data = await res.json();
+              
+              if (data && data.data && data.data.length > 0) {
+                  foundData = data.data;
+                  break; // Tìm thấy ảnh, thoát vòng lặp
+              }
+          } catch (err) {
+              clearTimeout(timeoutId);
+              console.warn(`Fetch error for delta ${delta}:`, err);
+          }
       }
+
+      if (!foundData) {
+          console.error('Mapillary error: No images found after expanding search radius');
+          el.loadingText.textContent = '⚠️ Không tìm thấy ảnh Mapillary tại đây, đang bỏ qua...';
+          setTimeout(() => { if (gameActive) nextRound(); }, 2500);
+          return;
+      }
+      
+      let panos = foundData.filter(img => img.is_pano === true);
+      let flats = foundData.filter(img => img.is_pano !== true);
+      
+      const actualLL = L.latLng(loc.lat, loc.lng);
+      const sortByDist = (a, b) => {
+         const da = actualLL.distanceTo(L.latLng(a.geometry.coordinates[1], a.geometry.coordinates[0]));
+         const db = actualLL.distanceTo(L.latLng(b.geometry.coordinates[1], b.geometry.coordinates[0]));
+         return da - db;
+      };
+      panos.sort(sortByDist);
+      flats.sort(sortByDist);
+
+      // Trộn ngẫu nhiên: ưu tiên lấy top 7 pano và top 3 flat gần nhất
+      const mixed = [...panos.slice(0, 7), ...flats.slice(0, 3)];
+      cachedIds = mixed.map(img => img.id);
+      
+      // Lưu mảng ID vào Cache
+      localStorage.setItem('mly_cache_v2_' + loc.id, JSON.stringify({
+        ids: cachedIds,
+        ts: Date.now()
+      }));
     }
 
     // Chọn ngẫu nhiên 1 góc ảnh (có thể là flat hoặc 360) từ mảng cache
@@ -612,7 +648,7 @@
 
     const moveToPromise = mlyViewer.moveTo(randomId);
     const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error("Timeout loading image")), 8000)
+        setTimeout(() => reject(new Error("Timeout loading image")), 12000)
     );
 
     try {
@@ -651,7 +687,7 @@
   async function syncMapillaryImage(imageId) {
       const moveToPromise = mlyViewer.moveTo(imageId);
       const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error("Timeout loading image")), 8000)
+          setTimeout(() => reject(new Error("Timeout loading image")), 12000)
       );
 
       try {
