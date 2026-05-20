@@ -31,6 +31,7 @@
   let oppMultiScore = 0;
   let oppGuessData = null; 
   let myGuessTemp = null;
+  let heartbeatInterval = null;
 
   // ── DOM helpers ───────────────────────────────────────────────────────────
   const $  = id => document.getElementById(id);
@@ -62,7 +63,8 @@
     soloResultBadge: $('solo-result-badge'),
     multiResultBadge: $('multi-result-badge'),
     multiMyScore : $('multi-my-score'),
-    multiOppScore: $('multi-opp-score')
+    multiOppScore: $('multi-opp-score'),
+    btnMultiRestart: $('btn-multi-restart')
   };
 
   // ── Bootstrap ─────────────────────────────────────────────────────────────
@@ -163,6 +165,12 @@
 
     // Restart
     $('btn-restart').addEventListener('click', () => { resetGame(); showScreen('start'); });
+    el.btnMultiRestart.addEventListener('click', () => {
+        if (isMultiplayer && peerConnection && peerConnection.open) {
+            peerConnection.send({ type: 'GO_TO_LOBBY' });
+            goToLobby();
+        }
+    });
   }
 
   function saveToken() {
@@ -204,11 +212,27 @@
     loadRound();
   }
 
-  // ── Multiplayer Logic ─────────────────────────────────────────────────────
   function cleanupPeer() {
+    stopHeartbeat();
     if (peerConnection) { peerConnection.close(); peerConnection = null; }
     if (peer) { peer.destroy(); peer = null; }
     isMultiplayer = false;
+  }
+
+  function startHeartbeat() {
+    stopHeartbeat();
+    heartbeatInterval = setInterval(() => {
+        if (peerConnection && peerConnection.open) {
+            peerConnection.send({ type: 'PING' });
+        }
+    }, 5000);
+  }
+
+  function stopHeartbeat() {
+    if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+        heartbeatInterval = null;
+    }
   }
 
   function createRoom() {
@@ -219,7 +243,19 @@
     el.hostStatus.textContent = "Đang khởi tạo phòng...";
     el.hostControls.style.display = 'none';
     
-    peer = new Peer('viguessr-' + code);
+    peer = new Peer('viguessr-' + code, {
+        config: {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun2.l.google.com:19302' }
+            ]
+        }
+    });
+    peer.on('disconnected', () => {
+        console.log('Mất kết nối với signaling server. Đang kết nối lại...');
+        peer.reconnect();
+    });
     peer.on('open', () => {
         el.hostStatus.textContent = "Đang chờ đối thủ tham gia mã: " + code;
     });
@@ -245,7 +281,19 @@
     el.hostStatus.textContent = "Đang kết nối đến " + code;
     el.hostControls.style.display = 'none';
 
-    peer = new Peer();
+    peer = new Peer({
+        config: {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun2.l.google.com:19302' }
+            ]
+        }
+    });
+    peer.on('disconnected', () => {
+        console.log('Mất kết nối với signaling server. Đang kết nối lại...');
+        peer.reconnect();
+    });
     peer.on('open', () => {
         peerConnection = peer.connect('viguessr-' + code);
         isHost = false;
@@ -257,15 +305,42 @@
     });
   }
 
+  function goToLobby() {
+    currentRound = 1;
+    myMultiScore = 0;
+    oppMultiScore = 0;
+    
+    if (guessMarker) { guessMap && guessMap.removeLayer(guessMarker); guessMarker = null; }
+    if (resultLine)  { guessMap && guessMap.removeLayer(resultLine);  resultLine  = null; }
+
+    showScreen('lobby');
+    el.lobbyMenu.style.display = 'none';
+    el.lobbyHostView.style.display = 'block';
+
+    if (isHost) {
+        el.hostStatus.textContent = "Đối thủ đã kết nối!";
+        el.hostControls.style.display = 'block';
+    } else {
+        el.hostRoomCode.textContent = 'ĐÃ KẾT NỐI';
+        el.hostStatus.textContent = 'Đang chờ chủ phòng chọn map...';
+        el.hostControls.style.display = 'none';
+    }
+  }
+
   function setupConnection() {
     peerConnection.on('open', () => {
         if (!isHost) {
             el.hostRoomCode.textContent = 'ĐÃ KẾT NỐI';
             el.hostStatus.textContent = 'Đang chờ chủ phòng chọn map...';
         }
+        startHeartbeat();
     });
     peerConnection.on('data', data => {
         if (!data || typeof data !== 'object') return;
+
+        if (data.type === 'PING') {
+            return;
+        }
 
         if (data.type === 'START_GAME') {
             const validModes = ['Hanoi', 'Saigon', 'Mixed'];
@@ -315,9 +390,12 @@
         } else if (data.type === 'SYNC_IMAGE') {
             if (typeof data.imageId !== 'string' && typeof data.imageId !== 'number') return;
             syncMapillaryImage(data.imageId);
+        } else if (data.type === 'GO_TO_LOBBY') {
+            goToLobby();
         }
     });
     peerConnection.on('close', () => {
+        stopHeartbeat();
         alert("Mất kết nối với đối thủ!");
         resetGame();
         showScreen('start');
@@ -744,6 +822,7 @@
         else finalStatus = '🤝 HÒA NHAU!';
         $('final-rating').textContent = `${finalStatus} (Đối thủ: ${oppMultiScore})`;
         $('btn-restart').textContent = 'Về trang chủ';
+        el.btnMultiRestart.style.display = 'block';
     } else {
         $('final-total-score').textContent = totalScore.toLocaleString();
         const pct = totalScore / (MAX_SCORE * TOTAL_ROUNDS);
@@ -755,6 +834,7 @@
         else rating = '🗺️ Hãy khám phá Việt Nam thêm!';
         $('final-rating').textContent = rating;
         $('btn-restart').textContent = 'Chơi lại';
+        el.btnMultiRestart.style.display = 'none';
     }
     showScreen('final');
   }
