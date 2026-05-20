@@ -33,6 +33,47 @@
   let myGuessTemp = null;
   let heartbeatInterval = null;
 
+
+  async function warmupMapillary(token) {
+      try {
+          // Fetch a default image near Hanoi Center to warm up WebGL silently
+          const lat = 21.0285;
+          const lng = 105.8522;
+          const delta = 0.01;
+          const bbox = `${lng - delta},${lat - delta},${lng + delta},${lat + delta}`;
+          const url = `https://graph.mapillary.com/images?access_token=${token}&fields=id&bbox=${bbox}&limit=1`;
+          
+          const res = await fetch(url);
+          const data = await res.json();
+          if (data && data.data && data.data.length > 0) {
+              const imageId = data.data[0].id;
+              console.log("Warming up Mapillary WebGL with image:", imageId);
+              if (mlyViewer) {
+                  try {
+                      await mlyViewer.moveTo(imageId);
+                      console.log("Mapillary WebGL warmed up successfully.");
+                  } catch (err) {
+                      console.warn("Mapillary warmup moveTo failed:", err);
+                  }
+              }
+          }
+      } catch (e) {
+          console.warn("Mapillary warmup failed:", e);
+      }
+  }
+
+  function sendPeerMessage(data) {
+      if (peerConnection && peerConnection.open) {
+          try {
+              peerConnection.send(data);
+          } catch (e) {
+              console.error("Lỗi gửi dữ liệu:", e);
+          }
+      } else {
+          console.warn("Kết nối chưa mở, không thể gửi:", data);
+      }
+  }
+
   // ── DOM helpers ───────────────────────────────────────────────────────────
   const $  = id => document.getElementById(id);
   const el = {
@@ -95,9 +136,16 @@
         }
       });
 
-      mlyViewer.on('load', () => {
+      mlyViewer.on('load', async () => {
+        await warmupMapillary(token);
         el.loadingView.style.display = 'none';
-        showScreen('start');
+        
+        // Chỉ về lại màn hình start nếu người chơi đang ở màn hình nhập token
+        // Nếu người chơi đã bấm "Tạo phòng" (đang ở Lobby) thì không được gọi showScreen('start') 
+        // vì hàm showScreen('start') sẽ kích hoạt cleanupPeer() làm mất kết nối.
+        if (el.tokenScreen.classList.contains('active')) {
+            showScreen('start');
+        }
       });
     } catch (err) {
       console.error(err);
@@ -167,7 +215,7 @@
     $('btn-restart').addEventListener('click', () => { resetGame(); showScreen('start'); });
     el.btnMultiRestart.addEventListener('click', () => {
         if (isMultiplayer && peerConnection && peerConnection.open) {
-            peerConnection.send({ type: 'GO_TO_LOBBY' });
+            sendPeerMessage({ type: 'GO_TO_LOBBY' });
             goToLobby();
         }
     });
@@ -223,7 +271,7 @@
     stopHeartbeat();
     heartbeatInterval = setInterval(() => {
         if (peerConnection && peerConnection.open) {
-            peerConnection.send({ type: 'PING' });
+            sendPeerMessage({ type: 'PING' });
         }
     }, 5000);
   }
@@ -247,23 +295,7 @@
         config: {
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' },
-                {
-                    urls: "turn:openrelay.metered.ca:80",
-                    username: "openrelayproject",
-                    credential: "openrelayproject"
-                },
-                {
-                    urls: "turn:openrelay.metered.ca:443",
-                    username: "openrelayproject",
-                    credential: "openrelayproject"
-                },
-                {
-                    urls: "turn:openrelay.metered.ca:443?transport=tcp",
-                    username: "openrelayproject",
-                    credential: "openrelayproject"
-                }
-            ]
+                { urls: 'stun:stun1.l.google.com:19302' }]
         }
     });
     peer.on('disconnected', () => {
@@ -277,8 +309,7 @@
         peerConnection = conn;
         isHost = true;
         setupConnection();
-        el.hostStatus.textContent = "Đối thủ đã kết nối!";
-        el.hostControls.style.display = 'block';
+        el.hostStatus.textContent = "Đối thủ đang kết nối...";
     });
     peer.on('error', err => {
         alert("Lỗi tạo phòng: " + err.message);
@@ -299,23 +330,7 @@
         config: {
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' },
-                {
-                    urls: "turn:openrelay.metered.ca:80",
-                    username: "openrelayproject",
-                    credential: "openrelayproject"
-                },
-                {
-                    urls: "turn:openrelay.metered.ca:443",
-                    username: "openrelayproject",
-                    credential: "openrelayproject"
-                },
-                {
-                    urls: "turn:openrelay.metered.ca:443?transport=tcp",
-                    username: "openrelayproject",
-                    credential: "openrelayproject"
-                }
-            ]
+                { urls: 'stun:stun1.l.google.com:19302' }]
         }
     });
     peer.on('disconnected', () => {
@@ -356,21 +371,27 @@
   }
 
   function setupConnection() {
-    // Nếu kết nối đã mở sẵn (phổ biến với Host khi nhận đối thủ kết nối)
-    if (peerConnection.open) {
-        if (!isHost) {
+    function handleConnectionOpen() {
+        if (isHost) {
+            el.hostStatus.textContent = "Đối thủ đã kết nối! Đang chờ đồng bộ...";
+            // We will show hostControls when receiving GUEST_READY
+        } else {
             el.hostRoomCode.textContent = 'ĐÃ KẾT NỐI';
             el.hostStatus.textContent = 'Đang chờ chủ phòng chọn map...';
+            // Also hide controls explicitly for guest just in case
+            el.hostControls.style.display = 'none';
+            // Send READY to host
+            sendPeerMessage({ type: 'GUEST_READY' });
         }
         startHeartbeat();
     }
 
+    if (peerConnection.open) {
+        handleConnectionOpen();
+    }
+
     peerConnection.on('open', () => {
-        if (!isHost) {
-            el.hostRoomCode.textContent = 'ĐÃ KẾT NỐI';
-            el.hostStatus.textContent = 'Đang chờ chủ phòng chọn map...';
-        }
-        startHeartbeat();
+        handleConnectionOpen();
     });
 
     peerConnection.on('error', err => {
@@ -382,12 +403,18 @@
 
         if (data.type === 'PING') {
             if (peerConnection && peerConnection.open) {
-                peerConnection.send({ type: 'PONG' });
+                sendPeerMessage({ type: 'PONG' });
             }
             return;
         }
 
         if (data.type === 'PONG') {
+            return;
+        }
+
+        if (data.type === 'GUEST_READY' && isHost) {
+            el.hostStatus.textContent = "Đối thủ đã sẵn sàng!";
+            el.hostControls.style.display = 'block';
             return;
         }
 
@@ -474,7 +501,7 @@
     const pool = mode === 'Mixed' ? [...LOCATIONS] : LOCATIONS.filter(l => l.city === mode);
     gameLocations = shuffle([...pool]).slice(0, TOTAL_ROUNDS);
     
-    peerConnection.send({
+    sendPeerMessage({
         type: 'START_GAME',
         mode: currentMode,
         locations: gameLocations
@@ -562,7 +589,7 @@
     loadSVImage(currentLoc);
   }
 
-  async function loadSVImage(loc) {
+  async function loadSVImage(loc, attempt = 1) {
     el.loadingView.style.display = 'flex';
     el.loadingText.textContent   = 'Đang tải ảnh đường phố...';
 
@@ -646,58 +673,81 @@
     // Chọn ngẫu nhiên 1 góc ảnh (có thể là flat hoặc 360) từ mảng cache
     const randomId = cachedIds[Math.floor(Math.random() * cachedIds.length)];
 
-    const moveToPromise = mlyViewer.moveTo(randomId);
-    const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error("Timeout loading image")), 12000)
-    );
+    if (!mlyViewer) {
+        console.error("mlyViewer chưa sẵn sàng");
+        return;
+    }
+
+    // Delay nhỏ để giải phóng luồng chính trước khi WebGL xử lý tải ảnh (tránh treo DataConnection)
+    await new Promise(resolve => setTimeout(resolve, 500));
 
     try {
+      const moveToPromise = mlyViewer.moveTo(randomId);
+      const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error("Timeout loading image")), 10000)
+      );
+
       await Promise.race([moveToPromise, timeoutPromise]);
       el.loadingView.style.display = 'none';
       if (isMultiplayer && isHost) {
-          peerConnection.send({ type: 'SYNC_IMAGE', imageId: randomId });
+          sendPeerMessage({ type: 'SYNC_IMAGE', imageId: randomId });
       }
     } catch (err) {
-      console.error('Lỗi khi tải hình ảnh ID:', err);
+      console.error(`Lỗi khi tải hình ảnh ID (lần thử ${attempt}):`, err);
       // Xóa ID bị lỗi khỏi cache
       cachedIds = cachedIds.filter(id => id !== randomId);
-      if (cachedIds.length > 0) {
+      
+      if (cachedIds.length > 0 && attempt < 2) {
         localStorage.setItem('mly_cache_v2_' + loc.id, JSON.stringify({
           ids: cachedIds,
           ts: Date.now()
         }));
-        // Thử load lại vòng này với ID khác
-        loadSVImage(loc);
+        // Thử load lại vòng này với ID khác (tối đa 1 lần thử lại)
+        loadSVImage(loc, attempt + 1);
       } else {
         localStorage.removeItem('mly_cache_v2_' + loc.id);
-        el.loadingText.textContent = '⚠️ Ảnh này bị lỗi hoặc đã bị xóa khỏi Mapillary...';
+        el.loadingText.textContent = '⚠️ Ảnh này bị lỗi. Tự động bỏ qua...';
         
         if (!isMultiplayer || isHost) {
             setTimeout(() => { if (gameActive) nextRound(); }, 2000);
         } else {
             el.loadingText.textContent = '⚠️ Lỗi tải ảnh. Đang báo cho Chủ phòng...';
             if (peerConnection && peerConnection.open) {
-                peerConnection.send({ type: 'IMAGE_LOAD_ERROR', round: currentRound });
+                sendPeerMessage({ type: 'IMAGE_LOAD_ERROR', round: currentRound });
             }
         }
       }
     }
   }
 
-  async function syncMapillaryImage(imageId) {
-      const moveToPromise = mlyViewer.moveTo(imageId);
-      const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error("Timeout loading image")), 12000)
-      );
+  async function syncMapillaryImage(imageId, attempt = 1) {
+      if (!mlyViewer) {
+          console.warn("Viewer chưa sẵn sàng, thử lại sau 1s...");
+          setTimeout(() => syncMapillaryImage(imageId, attempt), 1000);
+          return;
+      }
+
+      // Delay nhỏ để giải phóng luồng chính trước khi gọi WebGL API
+      await new Promise(resolve => setTimeout(resolve, 500));
 
       try {
+          const moveToPromise = mlyViewer.moveTo(imageId);
+          const timeoutPromise = new Promise((_, reject) => 
+              setTimeout(() => reject(new Error("Timeout loading image")), 12000)
+          );
+
           await Promise.race([moveToPromise, timeoutPromise]);
           el.loadingView.style.display = 'none';
       } catch (err) {
-          console.error("Lỗi đồng bộ ảnh Mapillary:", err);
-          el.loadingText.textContent = '⚠️ Lỗi đồng bộ ảnh! Đang báo cho Chủ phòng...';
-          if (peerConnection && peerConnection.open) {
-              peerConnection.send({ type: 'IMAGE_LOAD_ERROR', round: currentRound });
+          console.error(`Lỗi đồng bộ ảnh Mapillary (lần thử ${attempt}):`, err);
+          if (attempt < 2) {
+              el.loadingText.textContent = '⚠️ Thử kết nối lại ảnh...';
+              setTimeout(() => syncMapillaryImage(imageId, attempt + 1), 2000);
+          } else {
+              el.loadingText.textContent = '⚠️ Lỗi đồng bộ ảnh! Đang báo cho Chủ phòng...';
+              if (peerConnection && peerConnection.open) {
+                  sendPeerMessage({ type: 'IMAGE_LOAD_ERROR', round: currentRound });
+              }
           }
       }
   }
@@ -714,7 +764,7 @@
 
     if (isMultiplayer) {
         myMultiScore += score;
-        peerConnection.send({
+        sendPeerMessage({
             type: 'GUESS',
             guess: { lat: guessLL.lat, lng: guessLL.lng, distKm, score }
         });
@@ -884,10 +934,10 @@
     if (isMultiplayer) {
         if (!isHost) return;
         if (currentRound >= TOTAL_ROUNDS) {
-            peerConnection.send({ type: 'SHOW_FINAL' });
+            sendPeerMessage({ type: 'SHOW_FINAL' });
             showFinal();
         } else {
-            peerConnection.send({ type: 'NEXT_ROUND' });
+            sendPeerMessage({ type: 'NEXT_ROUND' });
             currentRound++;
             startMultiplayerRound();
         }
@@ -967,7 +1017,9 @@
     L.control.zoom({ position: 'bottomright' }).addTo(guessMap);
 
     guessMap.on('click', e => {
-      if (hasGuessed) return;
+      if (hasGuessed || !gameActive) return;
+      if (el.loadingView.style.display === 'flex') return; // Prevent blind guessing while loading
+
       if (guessMarker) guessMap.removeLayer(guessMarker);
       guessMarker = L.marker(e.latlng, {
         icon: L.divIcon({

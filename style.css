@@ -613,3 +613,15 @@ a { color: var(--neon-green); }
   background: rgba(46, 236, 113, 0.2) !important;
   color: var(--neon-green) !important;
 }
+
+/* ── Mapillary overrides ────────────────────────────────────────────────── */
+.mapillary-sequence-container {
+  top: 24px !important;
+  z-index: 60 !important; /* Nổi lên trên HUD (z-index 50) */
+}
+
+.mapillary-sequence-stepper,
+.mapillary-sequence-controls {
+  left: 24px !important;
+  transform: none !important;
+}
