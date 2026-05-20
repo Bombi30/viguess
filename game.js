@@ -328,6 +328,15 @@
   }
 
   function setupConnection() {
+    // Nếu kết nối đã mở sẵn (phổ biến với Host khi nhận đối thủ kết nối)
+    if (peerConnection.open) {
+        if (!isHost) {
+            el.hostRoomCode.textContent = 'ĐÃ KẾT NỐI';
+            el.hostStatus.textContent = 'Đang chờ chủ phòng chọn map...';
+        }
+        startHeartbeat();
+    }
+
     peerConnection.on('open', () => {
         if (!isHost) {
             el.hostRoomCode.textContent = 'ĐÃ KẾT NỐI';
@@ -335,10 +344,22 @@
         }
         startHeartbeat();
     });
+
+    peerConnection.on('error', err => {
+        console.error("Lỗi kết nối đối thủ:", err);
+    });
+
     peerConnection.on('data', data => {
         if (!data || typeof data !== 'object') return;
 
         if (data.type === 'PING') {
+            if (peerConnection && peerConnection.open) {
+                peerConnection.send({ type: 'PONG' });
+            }
+            return;
+        }
+
+        if (data.type === 'PONG') {
             return;
         }
 
@@ -392,6 +413,17 @@
             syncMapillaryImage(data.imageId);
         } else if (data.type === 'GO_TO_LOBBY') {
             goToLobby();
+        } else if (data.type === 'IMAGE_LOAD_ERROR') {
+            if (data.round === currentRound) {
+                console.warn("Đối thủ báo lỗi tải ảnh ở vòng:", data.round);
+                if (isHost) {
+                    el.loadingView.style.display = 'flex';
+                    el.loadingText.textContent = '⚠️ Đối thủ không tải được ảnh. Tự động qua vòng tiếp theo...';
+                    setTimeout(() => {
+                        if (gameActive) nextRound();
+                    }, 2500);
+                }
+            }
         }
     });
     peerConnection.on('close', () => {
@@ -529,10 +561,14 @@
       el.loadingText.textContent = 'Đang thu thập các góc ảnh quanh đây...';
       const delta = 0.0005; // ~50m
       const bbox = `${loc.lng - delta},${loc.lat - delta},${loc.lng + delta},${loc.lat + delta}`;
-      const url = `https://graph.mapillary.com/images?access_token=${mlyToken}&fields=id,geometry,is_pano&bbox=${bbox}&limit=100`;
+      const url = `https://graph.mapillary.com/images?access_token=${mlyToken}&fields=id,geometry,is_pano&bbox=${bbox}&limit=50`;
       
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+
       try {
-        const res = await fetch(url);
+        const res = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeoutId);
         const data = await res.json();
         
         if (data && data.data && data.data.length > 0) {
@@ -563,6 +599,7 @@
           throw new Error('No images found');
         }
       } catch (err) {
+        clearTimeout(timeoutId);
         console.error('Mapillary error:', err);
         el.loadingText.textContent = '⚠️ Không tìm thấy ảnh Mapillary tại đây, đang bỏ qua...';
         setTimeout(() => { if (gameActive) nextRound(); }, 2500);
@@ -573,8 +610,13 @@
     // Chọn ngẫu nhiên 1 góc ảnh (có thể là flat hoặc 360) từ mảng cache
     const randomId = cachedIds[Math.floor(Math.random() * cachedIds.length)];
 
+    const moveToPromise = mlyViewer.moveTo(randomId);
+    const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error("Timeout loading image")), 8000)
+    );
+
     try {
-      await mlyViewer.moveTo(randomId);
+      await Promise.race([moveToPromise, timeoutPromise]);
       el.loadingView.style.display = 'none';
       if (isMultiplayer && isHost) {
           peerConnection.send({ type: 'SYNC_IMAGE', imageId: randomId });
@@ -597,19 +639,30 @@
         if (!isMultiplayer || isHost) {
             setTimeout(() => { if (gameActive) nextRound(); }, 2000);
         } else {
-            el.loadingText.textContent = '⚠️ Lỗi tải ảnh. Đang chờ Chủ phòng bỏ qua...';
+            el.loadingText.textContent = '⚠️ Lỗi tải ảnh. Đang báo cho Chủ phòng...';
+            if (peerConnection && peerConnection.open) {
+                peerConnection.send({ type: 'IMAGE_LOAD_ERROR', round: currentRound });
+            }
         }
       }
     }
   }
 
   async function syncMapillaryImage(imageId) {
+      const moveToPromise = mlyViewer.moveTo(imageId);
+      const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error("Timeout loading image")), 8000)
+      );
+
       try {
-          await mlyViewer.moveTo(imageId);
+          await Promise.race([moveToPromise, timeoutPromise]);
           el.loadingView.style.display = 'none';
       } catch (err) {
-          console.error(err);
-          el.loadingText.textContent = '⚠️ Lỗi đồng bộ ảnh! Đang chờ Chủ phòng bỏ qua...';
+          console.error("Lỗi đồng bộ ảnh Mapillary:", err);
+          el.loadingText.textContent = '⚠️ Lỗi đồng bộ ảnh! Đang báo cho Chủ phòng...';
+          if (peerConnection && peerConnection.open) {
+              peerConnection.send({ type: 'IMAGE_LOAD_ERROR', round: currentRound });
+          }
       }
   }
 
