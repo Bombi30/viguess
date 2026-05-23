@@ -58,34 +58,7 @@
       }
     }, 500);
 
-    // Export button — nổi góc dưới phải
-    const btn = document.createElement('button');
-    btn.textContent = '📋 Export Log';
-    btn.style.cssText = `
-      position:fixed; bottom:12px; right:12px; z-index:99999;
-      background:#1a1a2e; color:#fff; border:1px solid #444;
-      padding:6px 12px; border-radius:20px; font-size:12px;
-      cursor:pointer; font-family:monospace;
-    `;
-    btn.onclick = () => {
-      const json = JSON.stringify({ 
-        generated: new Date().toISOString(),
-        totalLocations: typeof LOCATIONS !== 'undefined' ? LOCATIONS.length : '?',
-        sessionDuration: ((Date.now() - t0) / 1000).toFixed(1) + 's',
-        events: logs 
-      }, null, 2);
 
-      // Download file
-      const blob = new Blob([json], { type: 'application/json' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `viguess_log_${Date.now()}.json`;
-      a.click();
-
-      btn.textContent = '✅ Đã tải!';
-      setTimeout(() => btn.textContent = '📋 Export Log', 2000);
-    };
-    document.body.appendChild(btn);
 
     // Expose để game.js gọi được khi loadRound
     window.__vlog = log;
@@ -130,6 +103,7 @@
   let hasGuessed    = false;
   let gameActive    = false;
   let currentMode   = 'Mixed';
+  const activeFetches = new Map();
 
   const CITY_MAX_DISTANCES = {
     'Hanoi': 50,
@@ -404,6 +378,7 @@
       'Endless': '♾️ Vô Tận',
       'Endless_Hanoi': '♾️ Vô Tận - Hà Nội',
       'Endless_Saigon': '♾️ Vô Tận - Sài Gòn',
+      'Endless_DaNang': '♾️ Vô Tận - Đà Nẵng',
       'Endless_Mixed': '♾️ Vô Tận - Toàn Quốc',
       'Multiplayer': '⚔️ Đối Kháng',
       'Đối Kháng': '⚔️ Đối Kháng'
@@ -711,6 +686,93 @@
     });
   }
 
+  // Helper to query Mapillary for images around a location using safe, small bounding boxes.
+  // This avoids Mapillary's HTTP 500 error on dense coordinates by never querying large bboxes.
+  async function fetchImagesForLocation(loc) {
+    if (activeFetches.has(loc.id)) {
+      console.log(`[Deduplicate] Found active fetch for ${loc.name}, reusing promise.`);
+      return activeFetches.get(loc.id);
+    }
+
+    const fetchPromise = (async () => {
+      async function queryBBox(lat, lng, delta) {
+        const bbox = `${(lng - delta).toFixed(6)},${(lat - delta).toFixed(6)},${(lng + delta).toFixed(6)},${(lat + delta).toFixed(6)}`;
+        const url = `https://graph.mapillary.com/images?access_token=${nextToken()}&fields=id,geometry,is_pano&bbox=${bbox}&limit=100`;
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
+        try {
+          const res = await fetch(url, { signal: controller.signal });
+          clearTimeout(timeoutId);
+          if (res.status === 200) {
+            const data = await res.json();
+            return data?.data || [];
+          }
+        } catch (e) {
+          clearTimeout(timeoutId);
+        }
+        return [];
+      }
+
+      // 1. Query center first (delta = 0.0005)
+      let images = await queryBBox(loc.lat, loc.lng, 0.0005);
+      
+      // 2. If empty, query 4 small offsets in parallel (approx 90m radius)
+      if (images.length === 0) {
+        const offset = 0.0008;
+        const results = await Promise.all([
+          queryBBox(loc.lat + offset, loc.lng, 0.0005),
+          queryBBox(loc.lat - offset, loc.lng, 0.0005),
+          queryBBox(loc.lat, loc.lng + offset, 0.0005),
+          queryBBox(loc.lat, loc.lng - offset, 0.0005)
+        ]);
+        images = results.flat();
+      }
+      
+      // 3. If still empty, query 4 further offsets in parallel (approx 180m radius)
+      if (images.length === 0) {
+        const offset = 0.0016;
+        const results = await Promise.all([
+          queryBBox(loc.lat + offset, loc.lng, 0.0005),
+          queryBBox(loc.lat - offset, loc.lng, 0.0005),
+          queryBBox(loc.lat, loc.lng + offset, 0.0005),
+          queryBBox(loc.lat, loc.lng - offset, 0.0005)
+        ]);
+        images = results.flat();
+      }
+
+      if (images.length === 0) return null;
+
+      // Remove duplicates
+      const seen = new Set();
+      const uniqueImages = [];
+      for (const img of images) {
+        if (!seen.has(img.id)) {
+          seen.add(img.id);
+          uniqueImages.push(img);
+        }
+      }
+
+      // Sort by distance to the origin coordinate
+      const actualLL = L.latLng(loc.lat, loc.lng);
+      const sortByDist = (a, b) =>
+        actualLL.distanceTo(L.latLng(a.geometry.coordinates[1], a.geometry.coordinates[0])) -
+        actualLL.distanceTo(L.latLng(b.geometry.coordinates[1], b.geometry.coordinates[0]));
+
+      let panos = uniqueImages.filter(img => img.is_pano === true).sort(sortByDist);
+      let flats = uniqueImages.filter(img => img.is_pano !== true).sort(sortByDist);
+
+      return [...panos.slice(0, 7), ...flats.slice(0, 3)].map(img => img.id);
+    })();
+
+    activeFetches.set(loc.id, fetchPromise);
+
+    try {
+      return await fetchPromise;
+    } finally {
+      activeFetches.delete(loc.id);
+    }
+  }
+
   // Prefetch duy nhất 1 location, await được — dùng trước loadRound để hit cache tức thì
   async function prefetchSingle(loc) {
     if (!loc) return;
@@ -725,49 +787,12 @@
 
     if (ids.length === 0) {
       try {
-        const deltas = [0.0005, 0.0015, 0.003];
-        let hasTriedAndFoundNone = true;
-        let hasNetworkError = false;
-
-        for (const delta of deltas) {
-          const bbox = `${(loc.lng - delta).toFixed(6)},${(loc.lat - delta).toFixed(6)},${(loc.lng + delta).toFixed(6)},${(loc.lat + delta).toFixed(6)}`;
-          const url = `https://graph.mapillary.com/images?access_token=${nextToken()}&fields=id,geometry,is_pano&bbox=${bbox}&limit=100`;
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 10000);
-          try {
-            const res = await fetch(url, { signal: controller.signal });
-            clearTimeout(timeoutId);
-            if (!res.ok) {
-              hasNetworkError = true;
-              hasTriedAndFoundNone = false;
-              continue;
-            }
-            const data = await res.json();
-            if (data && data.data && data.data.length > 0) {
-              hasTriedAndFoundNone = false;
-              let panos = data.data.filter(img => img.is_pano === true);
-              let flats = data.data.filter(img => img.is_pano !== true);
-              const actualLL = L.latLng(loc.lat, loc.lng);
-              const sortByDist = (a, b) =>
-                actualLL.distanceTo(L.latLng(a.geometry.coordinates[1], a.geometry.coordinates[0])) -
-                actualLL.distanceTo(L.latLng(b.geometry.coordinates[1], b.geometry.coordinates[0]));
-              panos.sort(sortByDist);
-              flats.sort(sortByDist);
-
-              ids = [...panos.slice(0, 7), ...flats.slice(0, 3)].map(img => img.id);
-              localStorage.setItem('mly_cache_v2_' + loc.id, JSON.stringify({ ids, ts: Date.now() }));
-              console.log(`[prefetchSingle] Cached ${ids.length} ảnh cho: ${loc.name}`);
-              break;
-            }
-          } catch(e) {
-            clearTimeout(timeoutId);
-            hasNetworkError = true;
-            hasTriedAndFoundNone = false;
-            continue;
-          }
-        }
-
-        if (hasTriedAndFoundNone && !hasNetworkError) {
+        const resultIds = await fetchImagesForLocation(loc);
+        if (resultIds && resultIds.length > 0) {
+          ids = resultIds;
+          localStorage.setItem('mly_cache_v2_' + loc.id, JSON.stringify({ ids, ts: Date.now() }));
+          console.log(`[prefetchSingle] Cached ${ids.length} ảnh cho: ${loc.name}`);
+        } else {
           try {
             localStorage.setItem('mly_empty_' + loc.id, 'true');
             localStorage.removeItem('mly_good_' + loc.id);
@@ -1341,66 +1366,35 @@
     if (!cachedIds || cachedIds.length === 0) {
       el.loadingText.textContent = 'Đang tìm kiếm ảnh quanh khu vực này...';
       
-      // Optimize: Use fewer, larger bounding box steps. 0.002 (approx. 200m) finds images immediately for ~95% of locations.
-      // 0.008 (approx. 800m) covers the rest. Client-side sorting guarantees we still pick the closest image.
-      const deltas = [0.0005, 0.0015, 0.003];
-      let foundData = null;
-      let hasNetworkError = false;
-
-      for (const delta of deltas) {
-          if (sessionId !== currentGameSessionId) return;
-          const bbox = `${(loc.lng - delta).toFixed(6)},${(loc.lat - delta).toFixed(6)},${(loc.lng + delta).toFixed(6)},${(loc.lat + delta).toFixed(6)}`;
-          const url = `https://graph.mapillary.com/images?access_token=${nextToken()}&fields=id,geometry,is_pano&bbox=${bbox}&limit=100`;
-          
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-          try {
-              const res = await fetch(url, { signal: controller.signal });
-              clearTimeout(timeoutId);
-              if (sessionId !== currentGameSessionId) return;
-              if (res.status === 200) {
-                  const data = await res.json();
-                  if (sessionId !== currentGameSessionId) return;
-                  if (data && data.data && data.data.length > 0) {
-                      console.log(`Successfully found ${data.data.length} images at delta ${delta}`);
-                      foundData = data.data;
-                      break;
-                  }
-              } else {
-                  console.warn(`Mapillary API non-200 status (${res.status}) at delta ${delta}`);
-                  hasNetworkError = true;
-                  continue;
-              }
-          } catch (err) {
-              clearTimeout(timeoutId);
-              if (sessionId !== currentGameSessionId) return;
-              console.warn(`Fetch error at delta ${delta}:`, err);
-              hasNetworkError = true;
-              continue;
-          }
+      let resultIds = null;
+      try {
+        resultIds = await fetchImagesForLocation(loc);
+      } catch (err) {
+        console.warn(`Fetch error for ${loc.name}:`, err);
       }
 
-      if (!foundData) {
+      if (sessionId !== currentGameSessionId) return;
+
+      if (resultIds && resultIds.length > 0) {
+          cachedIds = resultIds;
+          localStorage.setItem('mly_cache_v2_' + loc.id, JSON.stringify({ ids: cachedIds, ts: Date.now() }));
+          console.log(`[loadSVImage] Successfully found & cached ${cachedIds.length} images for ${loc.name}`);
+      } else {
           console.error('Mapillary error: No images found or fetch failed');
           if (!isMultiplayer) {
-              if (!hasNetworkError) {
-                  try {
-                      localStorage.setItem('mly_empty_' + loc.id, 'true');
-                      localStorage.removeItem('mly_good_' + loc.id);
-                  } catch(e){}
-                  console.log(`[loadSVImage] Blacklisted empty location: ${loc.name}`);
-                  el.loadingText.textContent = '⚠️ Khu vực này không có ảnh, đang tìm điểm khác...';
-              } else {
-                  el.loadingText.textContent = '⚠️ Máy chủ Mapillary đang lỗi hoặc quá tải, đang thử lại...';
-              }
+              try {
+                  localStorage.setItem('mly_empty_' + loc.id, 'true');
+                  localStorage.removeItem('mly_good_' + loc.id);
+              } catch(e){}
+              console.log(`[loadSVImage] Blacklisted empty location: ${loc.name}`);
+              el.loadingText.textContent = '⚠️ Khu vực này không có ảnh, đang tìm điểm khác...';
               setTimeout(() => {
                   if (sessionId !== currentGameSessionId) return;
                   const pool = (currentMode === 'Mixed' ? [...LOCATIONS] : LOCATIONS.filter(l => l.city === currentMode))
                                .filter(l => !localStorage.getItem('mly_empty_' + l.id));
                   gameLocations[currentRound - 1] = pool[Math.floor(Math.random() * pool.length)];
                   loadRound();
-              }, hasNetworkError ? 2000 : 1000);
+              }, 1000);
           } else {
               if (isHost) {
                   try {
@@ -1434,28 +1428,6 @@
           }
           return;
       }
-      
-      let panos = foundData.filter(img => img.is_pano === true);
-      let flats = foundData.filter(img => img.is_pano !== true);
-      
-      const actualLL = L.latLng(loc.lat, loc.lng);
-      const sortByDist = (a, b) => {
-         const da = actualLL.distanceTo(L.latLng(a.geometry.coordinates[1], a.geometry.coordinates[0]));
-         const db = actualLL.distanceTo(L.latLng(b.geometry.coordinates[1], b.geometry.coordinates[0]));
-         return da - db;
-      };
-      panos.sort(sortByDist);
-      flats.sort(sortByDist);
-
-      // Trộn ngẫu nhiên: ưu tiên lấy top 7 pano và top 3 flat gần nhất
-      const mixed = [...panos.slice(0, 7), ...flats.slice(0, 3)];
-      cachedIds = mixed.map(img => img.id);
-      
-      // Lưu mảng ID vào Cache
-      localStorage.setItem('mly_cache_v2_' + loc.id, JSON.stringify({
-        ids: cachedIds,
-        ts: Date.now()
-      }));
     }
 
     // Chọn ID đã được preload (nếu có), hoặc chọn ngẫu nhiên từ mảng cache
@@ -1562,32 +1534,11 @@
 
     // Fetch nhẹ, không block UI
     try {
-      const deltas = [0.0005, 0.0015, 0.003];
-      for (const delta of deltas) {
-        if (sessionId !== currentGameSessionId) return;
-        const bbox = `${(nextLoc.lng - delta).toFixed(6)},${(nextLoc.lat - delta).toFixed(6)},${(nextLoc.lng + delta).toFixed(6)},${(nextLoc.lat + delta).toFixed(6)}`;
-        const url = `https://graph.mapillary.com/images?access_token=${nextToken()}&fields=id,geometry,is_pano&bbox=${bbox}&limit=100`;
-        
-        const res = await fetch(url);
-        if (sessionId !== currentGameSessionId) return;
-        if (!res.ok) continue;
-        const data = await res.json();
-        if (sessionId !== currentGameSessionId) return;
-        if (!data?.data?.length) continue;
-
-        let panos = data.data.filter(img => img.is_pano === true);
-        let flats = data.data.filter(img => img.is_pano !== true);
-        const actualLL = L.latLng(nextLoc.lat, nextLoc.lng);
-        const sortByDist = (a, b) =>
-          actualLL.distanceTo(L.latLng(a.geometry.coordinates[1], a.geometry.coordinates[0])) -
-          actualLL.distanceTo(L.latLng(b.geometry.coordinates[1], b.geometry.coordinates[0]));
-        panos.sort(sortByDist);
-        flats.sort(sortByDist);
-
-        const ids = [...panos.slice(0, 7), ...flats.slice(0, 3)].map(img => img.id);
-        localStorage.setItem('mly_cache_v2_' + nextLoc.id, JSON.stringify({ ids, ts: Date.now() }));
-        console.log(`[Prefetch] Đã cache ${ids.length} ảnh cho: ${nextLoc.name}`);
-        break;
+      const resultIds = await fetchImagesForLocation(nextLoc);
+      if (sessionId !== currentGameSessionId) return;
+      if (resultIds && resultIds.length > 0) {
+        localStorage.setItem('mly_cache_v2_' + nextLoc.id, JSON.stringify({ ids: resultIds, ts: Date.now() }));
+        console.log(`[Prefetch] Đã cache ${resultIds.length} ảnh cho: ${nextLoc.name}`);
       }
     } catch(e) {
       console.warn('[Prefetch] Thất bại, bỏ qua:', e);
@@ -1614,62 +1565,18 @@
       if (ids.length === 0) {
         // Fetch nhẹ
         try {
-          const deltas = [0.0005, 0.0015, 0.003];
-          let hasTriedAndFoundNone = true;
-          let hasNetworkError = false;
-
-          for (const delta of deltas) {
-            if (sessionId !== currentGameSessionId) return;
-            const bbox = `${(loc.lng - delta).toFixed(6)},${(loc.lat - delta).toFixed(6)},${(loc.lng + delta).toFixed(6)},${(loc.lat + delta).toFixed(6)}`;
-            const url = `https://graph.mapillary.com/images?access_token=${nextToken()}&fields=id,geometry,is_pano&bbox=${bbox}&limit=100`;
-            
-            try {
-              const controller = new AbortController();
-              const timeoutId = setTimeout(() => controller.abort(), 10000);
-              const res = await fetch(url, { signal: controller.signal });
-              clearTimeout(timeoutId);
-              if (sessionId !== currentGameSessionId) return;
-              if (!res.ok) {
-                hasNetworkError = true;
-                hasTriedAndFoundNone = false;
-                continue;
-              }
-              const data = await res.json();
-              if (sessionId !== currentGameSessionId) return;
-              if (data && data.data && data.data.length > 0) {
-                hasTriedAndFoundNone = false;
-                let panos = data.data.filter(img => img.is_pano === true);
-                let flats = data.data.filter(img => img.is_pano !== true);
-                const actualLL = L.latLng(loc.lat, loc.lng);
-                const sortByDist = (a, b) =>
-                  actualLL.distanceTo(L.latLng(a.geometry.coordinates[1], a.geometry.coordinates[0])) -
-                  actualLL.distanceTo(L.latLng(b.geometry.coordinates[1], b.geometry.coordinates[0]));
-                panos.sort(sortByDist);
-                flats.sort(sortByDist);
-
-                ids = [...panos.slice(0, 7), ...flats.slice(0, 3)].map(img => img.id);
-                localStorage.setItem('mly_cache_v2_' + loc.id, JSON.stringify({ ids, ts: Date.now() }));
-                console.log(`[Batch prefetch] Cached ${ids.length} ảnh cho: ${loc.name}`);
-                break;
-              }
-            } catch(e) {
-              hasNetworkError = true;
-              hasTriedAndFoundNone = false;
-              continue;
-            }
-          }
-
+          const resultIds = await fetchImagesForLocation(loc);
           if (sessionId !== currentGameSessionId) return;
-          if (hasTriedAndFoundNone && !hasNetworkError) {
+          if (resultIds && resultIds.length > 0) {
+            ids = resultIds;
+            localStorage.setItem('mly_cache_v2_' + loc.id, JSON.stringify({ ids, ts: Date.now() }));
+            console.log(`[Batch prefetch] Cached ${ids.length} ảnh cho: ${loc.name}`);
+          } else {
             try {
               localStorage.setItem('mly_empty_' + loc.id, 'true');
               localStorage.removeItem('mly_good_' + loc.id);
             } catch(e){}
             console.log(`[Batch prefetch] Blacklisted empty location: ${loc.name}`);
-          }
-          if (hasNetworkError) {
-            console.warn('[Batch prefetch] Dừng prefetch vì gặp lỗi mạng từ Mapillary.');
-            return; // Abort the rest of the batch to avoid spamming 500s
           }
         } catch(e) {
           console.warn('[Batch prefetch] Thất bại:', loc.name);
