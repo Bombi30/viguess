@@ -2,13 +2,121 @@
 (function () {
   'use strict';
 
+  // ── Session Logger (xóa khi release) ─────────────────────────────────────
+  (function setupLogger() {
+    const logs = [];
+    const t0 = Date.now();
+
+    function log(type, data) {
+      logs.push({ t: Date.now() - t0, type, ...data });
+    }
+
+    // Patch fetch — track từng Mapillary API call
+    const _fetch = window.fetch;
+    window.fetch = async function(url, opts) {
+      if (typeof url === 'string' && url.includes('graph.mapillary.com/images')) {
+        const bbox = url.match(/bbox=([^&]+)/)?.[1] ?? '';
+        const t = Date.now();
+        log('fetch_start', { url: url.substring(0, 120), bbox });
+        try {
+          const res = await _fetch(url, opts);
+          const clone = res.clone();
+          clone.json().then(d => {
+            log('fetch_done', {
+              bbox,
+              status: res.status,
+              count: d?.data?.length ?? 0,
+              ms: Date.now() - t
+            });
+          }).catch(() => log('fetch_parse_err', { ms: Date.now() - t }));
+          return res;
+        } catch(e) {
+          log('fetch_error', { bbox, error: e.message, ms: Date.now() - t });
+          throw e;
+        }
+      }
+      return _fetch(url, opts);
+    };
+
+    // Patch moveTo — track WebGL load time
+    const waitViewer = setInterval(() => {
+      if (typeof mlyViewer !== 'undefined' && mlyViewer?.moveTo) {
+        clearInterval(waitViewer);
+        const _moveTo = mlyViewer.moveTo.bind(mlyViewer);
+        mlyViewer.moveTo = async function(imageId) {
+          const t = Date.now();
+          log('moveto_start', { imageId });
+          try {
+            const r = await _moveTo(imageId);
+            log('moveto_done', { imageId, ms: Date.now() - t });
+            return r;
+          } catch(e) {
+            log('moveto_error', { imageId, error: e.message, ms: Date.now() - t });
+            throw e;
+          }
+        };
+      }
+    }, 500);
+
+    // Export button — nổi góc dưới phải
+    const btn = document.createElement('button');
+    btn.textContent = '📋 Export Log';
+    btn.style.cssText = `
+      position:fixed; bottom:12px; right:12px; z-index:99999;
+      background:#1a1a2e; color:#fff; border:1px solid #444;
+      padding:6px 12px; border-radius:20px; font-size:12px;
+      cursor:pointer; font-family:monospace;
+    `;
+    btn.onclick = () => {
+      const json = JSON.stringify({ 
+        generated: new Date().toISOString(),
+        totalLocations: typeof LOCATIONS !== 'undefined' ? LOCATIONS.length : '?',
+        sessionDuration: ((Date.now() - t0) / 1000).toFixed(1) + 's',
+        events: logs 
+      }, null, 2);
+
+      // Download file
+      const blob = new Blob([json], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `viguess_log_${Date.now()}.json`;
+      a.click();
+
+      btn.textContent = '✅ Đã tải!';
+      setTimeout(() => btn.textContent = '📋 Export Log', 2000);
+    };
+    document.body.appendChild(btn);
+
+    // Expose để game.js gọi được khi loadRound
+    window.__vlog = log;
+  })();
   // ── Config ────────────────────────────────────────────────────────────────
   const MAX_SCORE       = 5000;
   const MAX_DIST_KM     = 50;
   const TOTAL_ROUNDS    = 5;
+  const ENDLESS_LIVES              = 3;     // số mạng trong Endless
+  const ENDLESS_STREAK_THRESHOLD   = 2000;  // điểm tối thiểu để duy trì streak
 
   // ── State ─────────────────────────────────────────────────────────────────
-  let mlyToken      = localStorage.getItem('mapillary_client_token') || 'MLY|26275324248758064|7819d63bee8179a083cdd76e20557967';
+  const DEFAULT_TOKENS = [
+    'MLY|26275324248758064|7819d63bee8179a083cdd76e20557967',
+    'MLY|26662189923404302|a46d03e9defbc7f605a2b05306f9dff2',
+    'MLY|27778953475040760|b786b895882aee941ccc592124104490',
+    'MLY|27070253085941789|2a08818d3f6a3fff2f80a131d92a397a',
+    'MLY|27226548056949522|90ad5dcda0bb2725ac990af165ca7500',
+    'MLY|27534714996120672|5b9cc69d341bf1c8982162c8a677cf1b',
+    'MLY|27025498763758281|91078475dcc78870aab68328a2f157e5',
+    'MLY|27431447656550246|7b781f2a8344deea7d6acbf4dc8ec8b2',
+    'MLY|27042089485483851|0db89fa99829052f91d9ef81b7e33948',
+    'MLY|27193082473649436|3d7da71561a4257e1698eb5f24670102'
+  ];
+  let tokenIndex = 0;
+  function nextToken() {
+    const token = DEFAULT_TOKENS[tokenIndex % DEFAULT_TOKENS.length];
+    tokenIndex++;
+    return token;
+  }
+  let mlyToken = localStorage.getItem('mapillary_client_token') || DEFAULT_TOKENS[0];
   let mlyViewer     = null;
   let guessMap      = null;
   let resultMap     = null;
@@ -22,6 +130,26 @@
   let gameActive    = false;
   let currentMode   = 'Mixed';
 
+  const CITY_MAX_DISTANCES = {
+    'Hanoi': 50,
+    'Saigon': 50,
+    'DaNang': 30,
+    'DaLat': 30,
+    'HoiAn': 20,
+    'VungTau': 30,
+    'NhaTrang': 30,
+    'SaPa': 20,
+    'Mixed': 1300
+  };
+  let retryAction = null;
+
+  // ── Endless Mode State ─────────────────────────────────────────────────────
+  let isEndless         = false;
+  let endlessStreak     = 0;   // streak hiện tại
+  let endlessLives      = ENDLESS_LIVES; // mạng còn lại
+  let endlessBestStreak = 0;   // streak cao nhất trong session này
+  let endlessRounds     = 0;   // số vòng đã chơi
+
   // ── Multiplayer State ─────────────────────────────────────────────────────
   let isMultiplayer = false;
   let peer = null;
@@ -33,34 +161,13 @@
   let myGuessTemp = null;
   let heartbeatInterval = null;
 
+  // ── Timer State ───────────────────────────────────────────────────────────
+  let timerInterval = null;
+  let timeLeft      = 180;
+  let timerActive   = false;
+  let currentGameSessionId = 0;
 
-  async function warmupMapillary(token) {
-      try {
-          // Fetch a default image near Hanoi Center to warm up WebGL silently
-          const lat = 21.0285;
-          const lng = 105.8522;
-          const delta = 0.01;
-          const bbox = `${lng - delta},${lat - delta},${lng + delta},${lat + delta}`;
-          const url = `https://graph.mapillary.com/images?access_token=${token}&fields=id&bbox=${bbox}&limit=1`;
-          
-          const res = await fetch(url);
-          const data = await res.json();
-          if (data && data.data && data.data.length > 0) {
-              const imageId = data.data[0].id;
-              console.log("Warming up Mapillary WebGL with image:", imageId);
-              if (mlyViewer) {
-                  try {
-                      await mlyViewer.moveTo(imageId);
-                      console.log("Mapillary WebGL warmed up successfully.");
-                  } catch (err) {
-                      console.warn("Mapillary warmup moveTo failed:", err);
-                  }
-              }
-          }
-      } catch (e) {
-          console.warn("Mapillary warmup failed:", e);
-      }
-  }
+
 
   function sendPeerMessage(data) {
       if (peerConnection && peerConnection.open) {
@@ -72,6 +179,311 @@
       } else {
           console.warn("Kết nối chưa mở, không thể gửi:", data);
       }
+  }
+
+  // ── Sound Synthesizer (Web Audio API) ─────────────────────────────────────
+  let audioCtx = null;
+  function getAudioContext() {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioCtx && audioCtx.state === 'suspended') {
+      audioCtx.resume();
+    }
+    return audioCtx;
+  }
+
+  function playTick() {
+    try {
+      const ctx = getAudioContext();
+      if (!ctx) return;
+      const osc = ctx.createOscillator();
+      const gainNode = ctx.createGain();
+      
+      osc.connect(gainNode);
+      gainNode.connect(ctx.destination);
+      
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(800, ctx.currentTime);
+      
+      gainNode.gain.setValueAtTime(0.1, ctx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.05);
+      
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.05);
+    } catch (e) {
+      console.warn("Failed to play tick sound:", e);
+    }
+  }
+
+  function createNoiseBuffer(ctx) {
+    const bufferSize = ctx.sampleRate * 2;
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = Math.random() * 2 - 1;
+    }
+    return buffer;
+  }
+
+  function playExplosion(delay = 0) {
+    try {
+      const ctx = getAudioContext();
+      if (!ctx) return;
+      const now = ctx.currentTime + delay;
+      
+      // 1. Boom
+      const osc = ctx.createOscillator();
+      const oscGain = ctx.createGain();
+      osc.connect(oscGain);
+      oscGain.connect(ctx.destination);
+      
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(150, now);
+      osc.frequency.exponentialRampToValueAtTime(10, now + 0.8);
+      
+      oscGain.gain.setValueAtTime(0.3, now);
+      oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.8);
+      
+      osc.start(now);
+      osc.stop(now + 0.8);
+      
+      // 2. Hiss
+      const noise = ctx.createBufferSource();
+      noise.buffer = createNoiseBuffer(ctx);
+      
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(1000, now);
+      filter.frequency.exponentialRampToValueAtTime(200, now + 1.2);
+      
+      const noiseGain = ctx.createGain();
+      noise.connect(filter);
+      filter.connect(noiseGain);
+      noiseGain.connect(ctx.destination);
+      
+      noiseGain.gain.setValueAtTime(0, now);
+      noiseGain.gain.linearRampToValueAtTime(0.2, now + 0.05);
+      noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
+      
+      noise.start(now);
+      noise.stop(now + 1.2);
+      
+      // 3. Crackles
+      for (let i = 0; i < 6; i++) {
+        const crackleTime = now + 0.2 + Math.random() * 0.5;
+        const cOsc = ctx.createOscillator();
+        const cGain = ctx.createGain();
+        cOsc.connect(cGain);
+        cGain.connect(ctx.destination);
+        
+        cOsc.type = 'sine';
+        cOsc.frequency.setValueAtTime(1200 + Math.random() * 800, crackleTime);
+        
+        cGain.gain.setValueAtTime(0.02, crackleTime);
+        cGain.gain.exponentialRampToValueAtTime(0.001, crackleTime + 0.03);
+        
+        cOsc.start(crackleTime);
+        cOsc.stop(crackleTime + 0.03);
+      }
+    } catch (e) {
+      console.warn("Failed to play explosion:", e);
+    }
+  }
+
+  function playWinFanfare() {
+    try {
+      const ctx = getAudioContext();
+      if (!ctx) return;
+      const notes = [
+        { freq: 523.25, time: 0 },
+        { freq: 659.25, time: 0.15 },
+        { freq: 783.99, time: 0.3 },
+        { freq: 1046.50, time: 0.45, duration: 0.6 }
+      ];
+      
+      notes.forEach(note => {
+        const osc = ctx.createOscillator();
+        const gainNode = ctx.createGain();
+        osc.connect(gainNode);
+        gainNode.connect(ctx.destination);
+        
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(note.freq, ctx.currentTime + note.time);
+        
+        const dur = note.duration || 0.2;
+        gainNode.gain.setValueAtTime(0, ctx.currentTime + note.time);
+        gainNode.gain.linearRampToValueAtTime(0.12, ctx.currentTime + note.time + 0.05);
+        gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + note.time + dur);
+        
+        osc.start(ctx.currentTime + note.time);
+        osc.stop(ctx.currentTime + note.time + dur);
+      });
+      
+      playExplosion(0);
+      playExplosion(0.35);
+      playExplosion(0.7);
+      playExplosion(1.1);
+    } catch (e) {
+      console.warn("Failed to play fanfare:", e);
+    }
+  }
+
+  // ── Timer Logic ───────────────────────────────────────────────────────────
+  function startTimer() {
+    stopTimer();
+    timeLeft = 180;
+    timerActive = true;
+    updateTimerHUD();
+    
+    timerInterval = setInterval(() => {
+      if (!timerActive) return;
+      timeLeft--;
+      
+      updateTimerHUD();
+      
+      if (isMultiplayer && isHost) {
+        sendPeerMessage({ type: 'SYNC_TIMER', timeLeft });
+      }
+      
+      if (timeLeft <= 15 && timeLeft > 0) {
+        if (el.timerHud) el.timerHud.classList.add('timer-low');
+        playTick();
+      } else {
+        if (el.timerHud) el.timerHud.classList.remove('timer-low');
+      }
+      
+      if (timeLeft <= 0) {
+        stopTimer();
+        autoSubmitGuess();
+      }
+    }, 1000);
+  }
+
+  function stopTimer() {
+    timerActive = false;
+    if (timerInterval) {
+      clearInterval(timerInterval);
+      timerInterval = null;
+    }
+    if (el.timerHud) {
+      el.timerHud.classList.remove('timer-low');
+    }
+  }
+
+  function updateTimerHUD() {
+    const min = Math.floor(timeLeft / 60);
+    const sec = timeLeft % 60;
+    const valSpan = $('timer-value');
+    if (valSpan) {
+      valSpan.textContent = `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+    }
+  }
+
+  function autoSubmitGuess() {
+    if (hasGuessed) return;
+    if (!guessMarker) {
+      guessMarker = L.marker([0, 0]);
+    }
+    submitGuess();
+  }
+
+  // ── Leaderboard Logic (localStorage) ──────────────────────────────────────
+  function getModeDisplayName(mode) {
+    const mapping = {
+      'Hanoi': '🏛️ Hà Nội',
+      'Saigon': '🌆 Sài Gòn',
+      'DaNang': '🌉 Đà Nẵng',
+      'DaLat': '🌸 Đà Lạt',
+      'HoiAn': '⛩️ Hội An',
+      'VungTau': '🏖️ Vũng Tàu',
+      'NhaTrang': '🏝️ Nha Trang',
+      'SaPa': '🏔️ Sa Pa',
+      'Mixed': '🔀 Toàn Quốc',
+      'Endless': '♾️ Vô Tận',
+      'Endless_Hanoi': '♾️ Vô Tận - Hà Nội',
+      'Endless_Saigon': '♾️ Vô Tận - Sài Gòn',
+      'Endless_Mixed': '♾️ Vô Tận - Toàn Quốc',
+      'Multiplayer': '⚔️ Đối Kháng',
+      'Đối Kháng': '⚔️ Đối Kháng'
+    };
+    return mapping[mode] || mode;
+  }
+
+  function saveGameResult(score, mode) {
+    try {
+      let history = [];
+      try {
+        history = JSON.parse(localStorage.getItem('viguess_history') || '[]');
+      } catch (e) {
+        history = [];
+      }
+      if (!Array.isArray(history)) history = [];
+      
+      const newGame = {
+        score: score,
+        mode: mode,
+        date: new Date().toLocaleDateString('vi-VN', { 
+          day: 'numeric', 
+          month: 'numeric', 
+          hour: '2-digit', 
+          minute: '2-digit' 
+        })
+      };
+      
+      history.unshift(newGame);
+      if (history.length > 10) {
+        history = history.slice(0, 10);
+      }
+      
+      localStorage.setItem('viguess_history', JSON.stringify(history));
+      renderLeaderboards();
+    } catch (e) {
+      console.error("Failed to save game result:", e);
+    }
+  }
+
+  function renderLeaderboards() {
+    try {
+      let history = [];
+      try {
+        history = JSON.parse(localStorage.getItem('viguess_history') || '[]');
+      } catch (e) {
+        history = [];
+      }
+      if (!Array.isArray(history)) history = [];
+
+      const startSection = $('start-leaderboard');
+      const finalSection = $('final-leaderboard');
+      
+      if (history.length === 0) {
+        if (startSection) startSection.style.display = 'none';
+        if (finalSection) finalSection.style.display = 'none';
+        return;
+      }
+      
+      if (startSection) startSection.style.display = 'block';
+      if (finalSection) finalSection.style.display = 'block';
+      
+      let html = '';
+      history.forEach((game, idx) => {
+        html += `
+          <div class="leaderboard-item">
+            <span class="leaderboard-rank">#${idx + 1}</span>
+            <span class="leaderboard-mode">${getModeDisplayName(game.mode)}</span>
+            <span class="leaderboard-score">${game.score.toLocaleString()}</span>
+            <span class="leaderboard-date">${game.date}</span>
+          </div>
+        `;
+      });
+      
+      const startList = $('start-leaderboard-list');
+      const finalList = $('final-leaderboard-list');
+      if (startList) startList.innerHTML = html;
+      if (finalList) finalList.innerHTML = html;
+    } catch (e) {
+      console.error("Failed to render leaderboards:", e);
+    }
   }
 
   // ── DOM helpers ───────────────────────────────────────────────────────────
@@ -105,12 +517,20 @@
     multiResultBadge: $('multi-result-badge'),
     multiMyScore : $('multi-my-score'),
     multiOppScore: $('multi-opp-score'),
-    btnMultiRestart: $('btn-multi-restart')
+    btnMultiRestart: $('btn-multi-restart'),
+    timerHud     : $('timer-hud'),
+    btnRetryImg  : $('btn-retry-img')
   };
 
   // ── Bootstrap ─────────────────────────────────────────────────────────────
   function init() {
+    Object.keys(localStorage).forEach(k => {
+      if (k.startsWith('mly_empty_') || k.startsWith('mly_good_')) {
+        localStorage.removeItem(k);
+      }
+    });
     bindEvents();
+    renderLeaderboards();
     if (mlyToken) {
       initMapillary(mlyToken);
     } else {
@@ -132,17 +552,13 @@
           cover: false,
           direction: true,
           imagePlane: true,
-          sequence: true,
+          sequence: true
         }
       });
 
       mlyViewer.on('load', async () => {
-        await warmupMapillary(token);
         el.loadingView.style.display = 'none';
         
-        // Chỉ về lại màn hình start nếu người chơi đang ở màn hình nhập token
-        // Nếu người chơi đã bấm "Tạo phòng" (đang ở Lobby) thì không được gọi showScreen('start') 
-        // vì hàm showScreen('start') sẽ kích hoạt cleanupPeer() làm mất kết nối.
         if (el.tokenScreen.classList.contains('active')) {
             showScreen('start');
         }
@@ -161,6 +577,7 @@
     if (name === 'start') {
       el.startScreen.classList.add('active');
       cleanupPeer();
+      renderLeaderboards();
     }
     if (name === 'lobby')  el.lobbyScreen.classList.add('active');
     if (name === 'result') el.resultOverlay.classList.add('active');
@@ -170,19 +587,17 @@
 
   // ── Events ────────────────────────────────────────────────────────────────
   function bindEvents() {
-    // API Key input
     $('token-input').value = mlyToken;
     $('btn-save-token').addEventListener('click', saveToken);
     $('token-input').addEventListener('keydown', e => { if (e.key === 'Enter') saveToken(); });
 
-
-
-    // Solo Mode buttons
     document.querySelectorAll('#solo-modes .btn-mode').forEach(btn =>
-      btn.addEventListener('click', () => startGame(btn.dataset.city))
+      btn.addEventListener('click', () => {
+        getAudioContext();
+        startEndlessGame(btn.dataset.city);
+      })
     );
 
-    // Multiplayer triggers
     el.btnShowMultiplayer.addEventListener('click', () => {
       showScreen('lobby');
       el.lobbyMenu.style.display = 'block';
@@ -192,26 +607,32 @@
     el.btnLobbyBack.addEventListener('click', () => showScreen('start'));
     el.btnHostCancel.addEventListener('click', () => { cleanupPeer(); showScreen('start'); });
     
-    el.btnCreateRoom.addEventListener('click', createRoom);
-    el.btnJoinRoom.addEventListener('click', joinRoom);
+    el.btnCreateRoom.addEventListener('click', () => { getAudioContext(); createRoom(); });
+    el.btnJoinRoom.addEventListener('click', () => { getAudioContext(); joinRoom(); });
     
-    // Host Mode buttons
     document.querySelectorAll('.host-mode').forEach(btn =>
-      btn.addEventListener('click', () => startMultiplayerGame(btn.dataset.city))
+      btn.addEventListener('click', () => { getAudioContext(); startMultiplayerGame(btn.dataset.city); })
     );
 
-    // Quit
+    const mapContainer = $('map-container');
+    if (mapContainer) {
+      mapContainer.addEventListener('transitionend', (e) => {
+        if (e.propertyName === 'width' || e.propertyName === 'height') {
+          if (guessMap) {
+            guessMap.invalidateSize();
+          }
+        }
+      });
+    }
+
     $('btn-quit').addEventListener('click', () => {
       if (confirm('Thoát game?')) { resetGame(); showScreen('start'); }
     });
 
-    // Submit guess
     el.btnGuess.addEventListener('click', submitGuess);
 
-    // Next round
     $('btn-next').addEventListener('click', nextRound);
 
-    // Restart
     $('btn-restart').addEventListener('click', () => { resetGame(); showScreen('start'); });
     el.btnMultiRestart.addEventListener('click', () => {
         if (isMultiplayer && peerConnection && peerConnection.open) {
@@ -219,6 +640,17 @@
             goToLobby();
         }
     });
+
+    if (el.btnRetryImg) {
+      el.btnRetryImg.addEventListener('click', () => {
+        if (retryAction) {
+          el.btnRetryImg.style.display = 'none';
+          const spinner = el.loadingView.querySelector('.spinner');
+          if (spinner) spinner.style.display = 'block';
+          retryAction();
+        }
+      });
+    }
   }
 
   function saveToken() {
@@ -236,6 +668,8 @@
 
   // ── Game Flow ─────────────────────────────────────────────────────────────
   function startGame(mode) {
+    currentGameSessionId++;
+    const sessionId = currentGameSessionId;
     currentMode  = mode;
     currentRound = 1;
     totalScore   = 0;
@@ -247,17 +681,183 @@
     
     if (mlyViewer) setTimeout(() => mlyViewer.resize(), 50);
 
-    // Pick locations
-    const pool = mode === 'Mixed'
+    // Pick locations, filtering out empty ones from previous searches
+    const pool = (mode === 'Mixed'
       ? [...LOCATIONS]
-      : LOCATIONS.filter(l => l.city === mode);
+      : LOCATIONS.filter(l => l.city === mode))
+      .filter(l => !localStorage.getItem('mly_empty_' + l.id));
 
-    gameLocations = shuffle([...pool]);
+    gameLocations = shuffleLocations([...pool]);
 
     updateHUD();
     showScreen('game');
     initGuessMap();
-    loadRound();
+
+    // Hiển thị overlay tải ngay lập tức để ẩn đi hình ảnh cũ
+    el.loadingView.style.display = 'flex';
+    el.loadingText.textContent   = 'Đang chuẩn bị màn chơi...';
+
+    // Prefetch location[0] trước (await) → loadRound hit cache ngay, không chờ API
+    // Sau đó prefetch phần còn lại ngầm, không tranh băng thông với moveTo WebGL
+    prefetchSingle(gameLocations[0]).then(() => {
+      if (sessionId !== currentGameSessionId) return;
+      loadRound();
+      setTimeout(() => {
+        if (sessionId !== currentGameSessionId) return;
+        prefetchBatch(gameLocations.slice(1), 3);
+      }, 5000);
+    });
+  }
+
+  // Prefetch duy nhất 1 location, await được — dùng trước loadRound để hit cache tức thì
+  async function prefetchSingle(loc) {
+    if (!loc) return;
+    let ids = [];
+    try {
+      const storedStr = localStorage.getItem('mly_cache_v2_' + loc.id);
+      if (storedStr) {
+        const stored = JSON.parse(storedStr);
+        if (stored?.ids?.length > 0) ids = stored.ids;
+      }
+    } catch(e) {}
+
+    if (ids.length === 0) {
+      try {
+        const deltas = [0.002, 0.008, 0.02];
+        let hasTriedAndFoundNone = true;
+        let hasNetworkError = false;
+
+        for (const delta of deltas) {
+          const bbox = `${(loc.lng - delta).toFixed(6)},${(loc.lat - delta).toFixed(6)},${(loc.lng + delta).toFixed(6)},${(loc.lat + delta).toFixed(6)}`;
+          const url = `https://graph.mapillary.com/images?access_token=${nextToken()}&fields=id,geometry,is_pano&bbox=${bbox}&limit=100`;
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 10000);
+          try {
+            const res = await fetch(url, { signal: controller.signal });
+            clearTimeout(timeoutId);
+            if (!res.ok) {
+              hasNetworkError = true;
+              hasTriedAndFoundNone = false;
+              if (res.status >= 500) break;
+              continue;
+            }
+            const data = await res.json();
+            if (data && data.data && data.data.length > 0) {
+              hasTriedAndFoundNone = false;
+              let panos = data.data.filter(img => img.is_pano === true);
+              let flats = data.data.filter(img => img.is_pano !== true);
+              const actualLL = L.latLng(loc.lat, loc.lng);
+              const sortByDist = (a, b) =>
+                actualLL.distanceTo(L.latLng(a.geometry.coordinates[1], a.geometry.coordinates[0])) -
+                actualLL.distanceTo(L.latLng(b.geometry.coordinates[1], b.geometry.coordinates[0]));
+              panos.sort(sortByDist);
+              flats.sort(sortByDist);
+
+              ids = [...panos.slice(0, 7), ...flats.slice(0, 3)].map(img => img.id);
+              localStorage.setItem('mly_cache_v2_' + loc.id, JSON.stringify({ ids, ts: Date.now() }));
+              console.log(`[prefetchSingle] Cached ${ids.length} ảnh cho: ${loc.name}`);
+              break;
+            }
+          } catch(e) {
+            clearTimeout(timeoutId);
+            hasNetworkError = true;
+            hasTriedAndFoundNone = false;
+            break;
+          }
+        }
+
+        if (hasTriedAndFoundNone && !hasNetworkError) {
+          try {
+            localStorage.setItem('mly_empty_' + loc.id, 'true');
+            localStorage.removeItem('mly_good_' + loc.id);
+          } catch(e){}
+          console.log(`[prefetchSingle] Blacklisted empty location: ${loc.name}`);
+        }
+      } catch(e) {
+        console.warn('[prefetchSingle] Thất bại, loadRound sẽ tự fetch:', e);
+      }
+    }
+
+    if (ids.length > 0) {
+      loc.preloadedId = ids[Math.floor(Math.random() * ids.length)];
+      preloadImageTile(loc.preloadedId);
+    }
+  }
+
+  // Fetch URL thumbnail từ Mapillary Graph API và preload vào browser cache
+  async function preloadImageTile(imageId) {
+    if (!imageId) return;
+    try {
+      const url = `https://graph.mapillary.com/${imageId}?access_token=${nextToken()}&fields=thumb_256_url,thumb_1024_url`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) return;
+      const data = await res.json();
+      
+      const thumbUrl = data.thumb_1024_url || data.thumb_256_url;
+      if (thumbUrl) {
+        const img = new Image();
+        img.src = thumbUrl;
+        console.log(`[preloadTile] Preloading thumbnail cho: ${imageId}`);
+      }
+    } catch(e) {
+      // Không quan trọng nếu fail — moveTo() vẫn hoạt động bình thường
+    }
+  }
+
+  function startEndlessGame(city) {
+    currentGameSessionId++;
+    const sessionId = currentGameSessionId;
+    isEndless     = true;
+    currentMode   = city || 'Mixed';
+    currentRound  = 1;
+    totalScore    = 0;
+    hasGuessed    = false;
+    gameActive    = true;
+    endlessStreak = 0;
+    endlessLives  = ENDLESS_LIVES;
+    endlessRounds = 0;
+
+    isMultiplayer = false;
+    el.multiScoreHud.style.display = 'none';
+    
+    if (mlyViewer) setTimeout(() => mlyViewer.resize(), 50);
+
+    const pool = (currentMode === 'Mixed'
+      ? [...LOCATIONS]
+      : LOCATIONS.filter(l => l.city === currentMode))
+      .filter(l => !localStorage.getItem('mly_empty_' + l.id));
+
+    gameLocations = shuffleLocations([...pool]);
+
+    updateHUD();
+    updateEndlessHUD();
+    showScreen('game');
+    initGuessMap();
+
+    // Hiển thị overlay tải ngay lập tức để ẩn đi hình ảnh cũ
+    el.loadingView.style.display = 'flex';
+    el.loadingText.textContent   = 'Đang chuẩn bị màn chơi...';
+
+    // Prefetch location[0] trước (await) → loadRound hit cache ngay, không chờ API
+    // Sau đó prefetch phần còn lại ngầm, không tranh băng thông với moveTo WebGL
+    prefetchSingle(gameLocations[0]).then(() => {
+      if (sessionId !== currentGameSessionId) return;
+      loadRound();
+      setTimeout(() => {
+        if (sessionId !== currentGameSessionId) return;
+        prefetchBatch(gameLocations.slice(1), 3);
+      }, 5000);
+    });
+  }
+
+  function updateEndlessHUD() {
+    if ($('hud-round-block')) $('hud-round-block').style.display = 'none';
+    if ($('hud-lives-block')) $('hud-lives-block').style.display = 'flex';
+    if ($('hud-streak-block')) $('hud-streak-block').style.display = 'flex';
+
+    const livesString = '❤️'.repeat(Math.max(0, endlessLives)) || '💀';
+    if ($('hud-lives')) $('hud-lives').textContent = livesString;
+    if ($('hud-streak')) $('hud-streak').textContent = `${endlessStreak}🔥`;
   }
 
   function cleanupPeer() {
@@ -419,7 +1019,7 @@
         }
 
         if (data.type === 'START_GAME') {
-            const validModes = ['Hanoi', 'Saigon', 'Mixed'];
+            const validModes = ['Hanoi', 'Saigon', 'DaNang', 'DaLat', 'HoiAn', 'VungTau', 'NhaTrang', 'SaPa', 'Mixed'];
             if (!validModes.includes(data.mode)) {
                 console.error('Invalid game mode received:', data.mode);
                 return;
@@ -435,6 +1035,7 @@
                 if (typeof loc.name !== 'string' || typeof loc.city !== 'string') return;
             }
 
+            currentGameSessionId++;
             currentMode = data.mode;
             gameLocations = data.locations;
             currentRound = 1;
@@ -466,17 +1067,49 @@
         } else if (data.type === 'SYNC_IMAGE') {
             if (typeof data.imageId !== 'string' && typeof data.imageId !== 'number') return;
             syncMapillaryImage(data.imageId);
+        } else if (data.type === 'SWAP_LOCATION') {
+            if (data.round === currentRound) {
+                console.log("[SWAP_LOCATION] Received new location from host:", data.newLocation.name);
+                gameLocations[currentRound - 1] = data.newLocation;
+                currentLoc = data.newLocation;
+                resetRoundUI();
+                el.loadingView.style.display = 'flex';
+                el.loadingText.textContent = '⚠️ Chủ phòng đang đổi sang điểm khác...';
+            }
+        } else if (data.type === 'SYNC_TIMER') {
+            if (typeof data.timeLeft !== 'number' || isNaN(data.timeLeft)) return;
+            if (!isHost) {
+                timeLeft = data.timeLeft;
+                updateTimerHUD();
+                if (timeLeft <= 15 && timeLeft > 0) {
+                    if (el.timerHud) el.timerHud.classList.add('timer-low');
+                    playTick();
+                } else {
+                    if (el.timerHud) el.timerHud.classList.remove('timer-low');
+                }
+                if (timeLeft <= 0) {
+                    stopTimer();
+                    autoSubmitGuess();
+                }
+            }
         } else if (data.type === 'GO_TO_LOBBY') {
             goToLobby();
         } else if (data.type === 'IMAGE_LOAD_ERROR') {
             if (data.round === currentRound) {
                 console.warn("Đối thủ báo lỗi tải ảnh ở vòng:", data.round);
                 if (isHost) {
+                    const sessionId = currentGameSessionId;
                     el.loadingView.style.display = 'flex';
-                    el.loadingText.textContent = '⚠️ Đối thủ không tải được ảnh. Tự động qua vòng tiếp theo...';
+                    el.loadingText.textContent = '⚠️ Đối thủ lỗi tải ảnh, đang đổi điểm khác...';
                     setTimeout(() => {
-                        if (gameActive) nextRound();
-                    }, 2500);
+                        if (sessionId !== currentGameSessionId) return;
+                        const pool = (currentMode === 'Mixed' ? [...LOCATIONS] : LOCATIONS.filter(l => l.city === currentMode))
+                                     .filter(l => !localStorage.getItem('mly_empty_' + l.id));
+                        const newLoc = pool[Math.floor(Math.random() * pool.length)];
+                        gameLocations[currentRound - 1] = newLoc;
+                        sendPeerMessage({ type: 'SWAP_LOCATION', round: currentRound, newLocation: newLoc });
+                        loadRound();
+                    }, 1500);
                 }
             }
         }
@@ -490,6 +1123,7 @@
   }
 
   function startMultiplayerGame(mode) {
+    currentGameSessionId++;
     currentMode = mode;
     currentRound = 1;
     myMultiScore = 0;
@@ -497,9 +1131,10 @@
     isMultiplayer = true;
     el.multiScoreHud.style.display = 'flex';
     
-    // Pick exactly 5 random locations for both
-    const pool = mode === 'Mixed' ? [...LOCATIONS] : LOCATIONS.filter(l => l.city === mode);
-    gameLocations = shuffle([...pool]).slice(0, TOTAL_ROUNDS);
+    // Pick exactly 5 random locations for both, filtering out empty ones
+    const pool = (mode === 'Mixed' ? [...LOCATIONS] : LOCATIONS.filter(l => l.city === mode))
+                 .filter(l => !localStorage.getItem('mly_empty_' + l.id));
+    gameLocations = shuffleLocations([...pool]).slice(0, TOTAL_ROUNDS);
     
     sendPeerMessage({
         type: 'START_GAME',
@@ -542,8 +1177,10 @@
   }
 
   function resetRoundUI() {
-    if (guessMarker) { guessMap.removeLayer(guessMarker); guessMarker = null; }
-    if (resultLine)  { guessMap.removeLayer(resultLine);  resultLine  = null; }
+    if (guessMarker && guessMap) { guessMap.removeLayer(guessMarker); }
+    guessMarker = null;
+    if (resultLine && guessMap)  { guessMap.removeLayer(resultLine); }
+    resultLine  = null;
     el.btnGuess.disabled = true;
     el.btnGuess.style.display = 'block';
 
@@ -551,37 +1188,99 @@
       guessMap.setView([16.0, 106.5], 5);
     }
 
-    let badge = '🗺️ Việt Nam';
-    if (currentLoc && currentLoc.city === 'Hanoi') badge = '🏛️ Hà Nội';
-    else if (currentLoc && currentLoc.city === 'Saigon') badge = '🌆 Sài Gòn';
-    $('city-badge').textContent = badge;
+    retryAction = null;
+    if (el.btnRetryImg) {
+      el.btnRetryImg.style.display = 'none';
+    }
+    const spinner = el.loadingView.querySelector('.spinner');
+    if (spinner) {
+      spinner.style.display = 'block';
+    }
+
+    const cityBadgeEl = $('city-badge');
+    if (currentMode === 'Mixed') {
+      if (cityBadgeEl) cityBadgeEl.style.display = 'none';
+    } else {
+      if (cityBadgeEl) cityBadgeEl.style.display = '';
+      let badge = '🗺️ Việt Nam';
+      if (currentLoc) {
+        if (currentLoc.city === 'Hanoi') badge = '🏛️ Hà Nội';
+        else if (currentLoc.city === 'Saigon') badge = '🌆 Sài Gòn';
+        else if (currentLoc.city === 'DaNang') badge = '🌉 Đà Nẵng';
+        else if (currentLoc.city === 'DaLat') badge = '🌸 Đà Lạt';
+        else if (currentLoc.city === 'HoiAn') badge = '⛩️ Hội An';
+        else if (currentLoc.city === 'VungTau') badge = '🏖️ Vũng Tàu';
+        else if (currentLoc.city === 'NhaTrang') badge = '🏝️ Nha Trang';
+        else if (currentLoc.city === 'SaPa') badge = '🏔️ Sa Pa';
+      }
+      if (cityBadgeEl) cityBadgeEl.textContent = badge;
+    }
   }
 
   function resetGame() {
-    gameActive = false;
-    currentRound = 1;
-    totalScore   = 0;
-    if (guessMarker) { guessMap && guessMap.removeLayer(guessMarker); guessMarker = null; }
-    if (resultLine)  { guessMap && guessMap.removeLayer(resultLine);  resultLine  = null; }
+    currentGameSessionId++;
+    stopTimer();
+    gameActive    = false;
+    isEndless     = false;
+    currentRound  = 1;
+    totalScore    = 0;
+    endlessStreak = 0;
+    endlessLives  = ENDLESS_LIVES;
+    endlessRounds = 0;
+    if (guessMarker && guessMap) { guessMap.removeLayer(guessMarker); }
+    guessMarker = null;
+    if (resultLine && guessMap)  { guessMap.removeLayer(resultLine); }
+    resultLine  = null;
+    if (guessMap) {
+      try {
+        guessMap.remove();
+      } catch (e) {
+        console.warn("Error removing guessMap:", e);
+      }
+      guessMap = null;
+    }
+    if (resultMap) {
+      try {
+        resultMap.remove();
+      } catch (e) {
+        console.warn("Error removing resultMap:", e);
+      }
+      resultMap = null;
+    }
     el.btnGuess.disabled = true;
     $('total-score').textContent   = '0';
     $('current-round').textContent = '1';
+    // Restore HUD to classic state
+    if ($('hud-round-block')) $('hud-round-block').style.display = 'flex';
+    if ($('hud-lives-block')) $('hud-lives-block').style.display = 'none';
+    if ($('hud-streak-block')) $('hud-streak-block').style.display = 'none';
   }
 
   function loadRound() {
-    if (currentRound > TOTAL_ROUNDS) { showFinal(); return; }
+    if (!gameActive) return;
+    // In endless mode we never stop for TOTAL_ROUNDS; in classic we do
+    if (!isEndless && currentRound > TOTAL_ROUNDS) { showFinal(); return; }
 
     // If we run out of locations in the pool, reshuffle
     if (currentRound > gameLocations.length) {
-      const pool = currentMode === 'Mixed' ? [...LOCATIONS] : LOCATIONS.filter(l => l.city === currentMode);
-      gameLocations.push(...shuffle([...pool]));
+      const pool = (currentMode === 'Mixed' ? [...LOCATIONS] : LOCATIONS.filter(l => l.city === currentMode))
+                   .filter(l => !localStorage.getItem('mly_empty_' + l.id));
+      gameLocations.push(...shuffleLocations([...pool]));
     }
 
     currentLoc = gameLocations[currentRound - 1];
     hasGuessed = false;
 
+    if (window.__vlog && currentLoc) {
+      window.__vlog('round_start', { 
+        id: currentLoc.id, name: currentLoc.name, 
+        city: currentLoc.city, lat: currentLoc.lat, lng: currentLoc.lng 
+      });
+    }
+
     resetRoundUI();
     updateHUD();
+    if (isEndless) updateEndlessHUD();
 
     // Load Street View
     el.loadingView.style.display = 'flex';
@@ -590,7 +1289,16 @@
   }
 
   async function loadSVImage(loc, attempt = 1) {
+    const sessionId = currentGameSessionId;
+    if (el.btnRetryImg) el.btnRetryImg.style.display = 'none';
+    const spinner = el.loadingView.querySelector('.spinner');
+    if (spinner) spinner.style.display = 'block';
     el.loadingView.style.display = 'flex';
+
+    if (mlyViewer) {
+      mlyViewer.setAccessToken(nextToken());
+    }
+
     el.loadingText.textContent   = 'Đang tải ảnh đường phố...';
 
     // Thử lấy mảng ID ảnh từ bộ nhớ đệm (Cache V2) để tăng tốc và đa dạng hóa
@@ -612,38 +1320,101 @@
       }
     } catch(e) {}
 
+    const hadCache = cachedIds && cachedIds.length > 0;
     if (!cachedIds || cachedIds.length === 0) {
-      el.loadingText.textContent = 'Đang mở rộng tìm kiếm ảnh quanh đây...';
+      el.loadingText.textContent = 'Đang tìm kiếm ảnh quanh khu vực này...';
       
-      const deltas = [0.0005, 0.002, 0.01]; // Tương đương ~50m, ~200m, ~1km
+      // Optimize: Use fewer, larger bounding box steps. 0.002 (approx. 200m) finds images immediately for ~95% of locations.
+      // 0.008 (approx. 800m) covers the rest. Client-side sorting guarantees we still pick the closest image.
+      const deltas = [0.002, 0.008, 0.02];
       let foundData = null;
+      let hasNetworkError = false;
 
       for (const delta of deltas) {
-          const bbox = `${loc.lng - delta},${loc.lat - delta},${loc.lng + delta},${loc.lat + delta}`;
-          const url = `https://graph.mapillary.com/images?access_token=${mlyToken}&fields=id,geometry,is_pano&bbox=${bbox}&limit=50`;
+          if (sessionId !== currentGameSessionId) return;
+          const bbox = `${(loc.lng - delta).toFixed(6)},${(loc.lat - delta).toFixed(6)},${(loc.lng + delta).toFixed(6)},${(loc.lat + delta).toFixed(6)}`;
+          const url = `https://graph.mapillary.com/images?access_token=${nextToken()}&fields=id,geometry,is_pano&bbox=${bbox}&limit=100`;
           
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 6000); // 6s timeout cho mỗi lần fetch
+          const timeoutId = setTimeout(() => controller.abort(), 10000);
 
           try {
               const res = await fetch(url, { signal: controller.signal });
               clearTimeout(timeoutId);
-              const data = await res.json();
-              
-              if (data && data.data && data.data.length > 0) {
-                  foundData = data.data;
-                  break; // Tìm thấy ảnh, thoát vòng lặp
+              if (sessionId !== currentGameSessionId) return;
+              if (res.status === 200) {
+                  const data = await res.json();
+                  if (sessionId !== currentGameSessionId) return;
+                  if (data && data.data && data.data.length > 0) {
+                      console.log(`Successfully found ${data.data.length} images at delta ${delta}`);
+                      foundData = data.data;
+                      break;
+                  }
+              } else {
+                  console.warn(`Mapillary API non-200 status (${res.status}) at delta ${delta}`);
+                  hasNetworkError = true;
+                  if (res.status >= 500) break;
               }
           } catch (err) {
               clearTimeout(timeoutId);
-              console.warn(`Fetch error for delta ${delta}:`, err);
+              if (sessionId !== currentGameSessionId) return;
+              console.warn(`Fetch error at delta ${delta}:`, err);
+              hasNetworkError = true;
+              break;
           }
       }
 
       if (!foundData) {
-          console.error('Mapillary error: No images found after expanding search radius');
-          el.loadingText.textContent = '⚠️ Không tìm thấy ảnh Mapillary tại đây, đang bỏ qua...';
-          setTimeout(() => { if (gameActive) nextRound(); }, 2500);
+          console.error('Mapillary error: No images found or fetch failed');
+          if (!isMultiplayer) {
+              if (!hasNetworkError) {
+                  try {
+                      localStorage.setItem('mly_empty_' + loc.id, 'true');
+                      localStorage.removeItem('mly_good_' + loc.id);
+                  } catch(e){}
+                  console.log(`[loadSVImage] Blacklisted empty location: ${loc.name}`);
+                  el.loadingText.textContent = '⚠️ Khu vực này không có ảnh, đang tìm điểm khác...';
+              } else {
+                  el.loadingText.textContent = '⚠️ Máy chủ Mapillary đang lỗi hoặc quá tải, đang thử lại...';
+              }
+              setTimeout(() => {
+                  if (sessionId !== currentGameSessionId) return;
+                  const pool = (currentMode === 'Mixed' ? [...LOCATIONS] : LOCATIONS.filter(l => l.city === currentMode))
+                               .filter(l => !localStorage.getItem('mly_empty_' + l.id));
+                  gameLocations[currentRound - 1] = pool[Math.floor(Math.random() * pool.length)];
+                  loadRound();
+              }, hasNetworkError ? 2000 : 1000);
+          } else {
+              if (isHost) {
+                  try {
+                      localStorage.setItem('mly_empty_' + loc.id, 'true');
+                      localStorage.removeItem('mly_good_' + loc.id);
+                  } catch(e){}
+                  console.log(`[loadSVImage] (Multiplayer) Blacklisted empty location: ${loc.name}`);
+                  el.loadingText.textContent = '⚠️ Khu vực này không có ảnh, đang đổi điểm khác...';
+                  setTimeout(() => {
+                      if (sessionId !== currentGameSessionId) return;
+                      const pool = (currentMode === 'Mixed' ? [...LOCATIONS] : LOCATIONS.filter(l => l.city === currentMode))
+                                   .filter(l => !localStorage.getItem('mly_empty_' + l.id));
+                      const newLoc = pool[Math.floor(Math.random() * pool.length)];
+                      gameLocations[currentRound - 1] = newLoc;
+                      sendPeerMessage({ type: 'SWAP_LOCATION', round: currentRound, newLocation: newLoc });
+                      loadRound();
+                  }, 1500);
+              } else {
+                  const spinner = el.loadingView.querySelector('.spinner');
+                  if (spinner) spinner.style.display = 'none';
+                  el.loadingText.textContent = '⚠️ Không tìm thấy ảnh Mapillary tại đây.';
+                  if (el.btnRetryImg) {
+                      el.btnRetryImg.textContent = 'Thử tìm lại';
+                      el.btnRetryImg.style.display = 'inline-block';
+                  }
+                  retryAction = () => {
+                      if (sessionId !== currentGameSessionId) return;
+                      loadSVImage(loc, attempt);
+                  };
+              }
+          }
           return;
       }
       
@@ -670,8 +1441,8 @@
       }));
     }
 
-    // Chọn ngẫu nhiên 1 góc ảnh (có thể là flat hoặc 360) từ mảng cache
-    const randomId = cachedIds[Math.floor(Math.random() * cachedIds.length)];
+    // Chọn ID đã được preload (nếu có), hoặc chọn ngẫu nhiên từ mảng cache
+    const randomId = loc.preloadedId || cachedIds[Math.floor(Math.random() * cachedIds.length)];
 
     if (!mlyViewer) {
         console.error("mlyViewer chưa sẵn sàng");
@@ -679,20 +1450,25 @@
     }
 
     // Delay nhỏ để giải phóng luồng chính trước khi WebGL xử lý tải ảnh (tránh treo DataConnection)
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise(resolve => setTimeout(resolve, hadCache ? 0 : (isMultiplayer ? 100 : 30)));
+    if (sessionId !== currentGameSessionId) return;
 
     try {
       const moveToPromise = mlyViewer.moveTo(randomId);
       const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error("Timeout loading image")), 10000)
+          setTimeout(() => reject(new Error("Timeout loading image")), 8000)
       );
 
       await Promise.race([moveToPromise, timeoutPromise]);
+      if (sessionId !== currentGameSessionId) return;
       el.loadingView.style.display = 'none';
+      try { localStorage.setItem('mly_good_' + loc.id, '1'); } catch(e) {}
       if (isMultiplayer && isHost) {
           sendPeerMessage({ type: 'SYNC_IMAGE', imageId: randomId });
       }
+      startTimer();
     } catch (err) {
+      if (sessionId !== currentGameSessionId) return;
       console.error(`Lỗi khi tải hình ảnh ID (lần thử ${attempt}):`, err);
       // Xóa ID bị lỗi khỏi cache
       cachedIds = cachedIds.filter(id => id !== randomId);
@@ -706,45 +1482,246 @@
         loadSVImage(loc, attempt + 1);
       } else {
         localStorage.removeItem('mly_cache_v2_' + loc.id);
-        el.loadingText.textContent = '⚠️ Ảnh này bị lỗi. Tự động bỏ qua...';
+        localStorage.removeItem('mly_good_' + loc.id);
         
-        if (!isMultiplayer || isHost) {
-            setTimeout(() => { if (gameActive) nextRound(); }, 2000);
+        if (!isMultiplayer) {
+            el.loadingText.textContent = '⚠️ Ảnh này bị lỗi tải quá lâu, đang đổi điểm khác...';
+            setTimeout(() => {
+                if (sessionId !== currentGameSessionId) return;
+                const pool = currentMode === 'Mixed' ? [...LOCATIONS] : LOCATIONS.filter(l => l.city === currentMode);
+                gameLocations[currentRound - 1] = pool[Math.floor(Math.random() * pool.length)];
+                loadRound();
+            }, 1000);
         } else {
-            el.loadingText.textContent = '⚠️ Lỗi tải ảnh. Đang báo cho Chủ phòng...';
-            if (peerConnection && peerConnection.open) {
-                sendPeerMessage({ type: 'IMAGE_LOAD_ERROR', round: currentRound });
+            const spinner = el.loadingView.querySelector('.spinner');
+            if (spinner) spinner.style.display = 'none';
+            el.loadingText.textContent = '⚠️ Ảnh này bị lỗi hoặc tải quá lâu.';
+            if (el.btnRetryImg) {
+                el.btnRetryImg.textContent = 'Thử ảnh khác';
+                el.btnRetryImg.style.display = 'inline-block';
+            }
+            retryAction = () => {
+                if (sessionId !== currentGameSessionId) return;
+                loadSVImage(loc, 1);
+            };
+            
+            if (!isHost) {
+                if (peerConnection && peerConnection.open) {
+                    sendPeerMessage({ type: 'IMAGE_LOAD_ERROR', round: currentRound });
+                }
             }
         }
       }
     }
   }
 
+  // Prefetch: chỉ fetch & cache imageIds, KHÔNG moveTo (không tốn WebGL)
+  async function prefetchNextLocation() {
+    if (isMultiplayer) return; // multiplayer tự sync riêng
+    if (!isEndless && currentRound >= TOTAL_ROUNDS) return; // classic đã hết vòng
+    const sessionId = currentGameSessionId;
+
+    // Tính index vòng tiếp theo
+    let nextIdx = currentRound; // currentRound là 1-based, nên nextIdx = currentRound trỏ đến vòng kế
+    
+    // Endless: pool có thể cần mở rộng
+    if (nextIdx >= gameLocations.length) {
+      const pool = (currentMode === 'Mixed' ? [...LOCATIONS] : LOCATIONS.filter(l => l.city === currentMode))
+                   .filter(l => !localStorage.getItem('mly_empty_' + l.id));
+      gameLocations.push(...shuffleLocations([...pool]));
+    }
+
+    const nextLoc = gameLocations[nextIdx];
+    if (!nextLoc) return;
+
+    // Nếu đã có cache thì bỏ qua
+    try {
+      const storedStr = localStorage.getItem('mly_cache_v2_' + nextLoc.id);
+      if (storedStr) {
+        const stored = JSON.parse(storedStr);
+        if (stored && stored.ids && stored.ids.length > 0) return; // đã có cache
+      }
+    } catch(e) {}
+
+    // Fetch nhẹ, không block UI
+    try {
+      const deltas = [0.002, 0.008, 0.02];
+      for (const delta of deltas) {
+        if (sessionId !== currentGameSessionId) return;
+        const bbox = `${(nextLoc.lng - delta).toFixed(6)},${(nextLoc.lat - delta).toFixed(6)},${(nextLoc.lng + delta).toFixed(6)},${(nextLoc.lat + delta).toFixed(6)}`;
+        const url = `https://graph.mapillary.com/images?access_token=${nextToken()}&fields=id,geometry,is_pano&bbox=${bbox}&limit=100`;
+        
+        const res = await fetch(url);
+        if (sessionId !== currentGameSessionId) return;
+        if (!res.ok) continue;
+        const data = await res.json();
+        if (sessionId !== currentGameSessionId) return;
+        if (!data?.data?.length) continue;
+
+        let panos = data.data.filter(img => img.is_pano === true);
+        let flats = data.data.filter(img => img.is_pano !== true);
+        const actualLL = L.latLng(nextLoc.lat, nextLoc.lng);
+        const sortByDist = (a, b) =>
+          actualLL.distanceTo(L.latLng(a.geometry.coordinates[1], a.geometry.coordinates[0])) -
+          actualLL.distanceTo(L.latLng(b.geometry.coordinates[1], b.geometry.coordinates[0]));
+        panos.sort(sortByDist);
+        flats.sort(sortByDist);
+
+        const ids = [...panos.slice(0, 7), ...flats.slice(0, 3)].map(img => img.id);
+        localStorage.setItem('mly_cache_v2_' + nextLoc.id, JSON.stringify({ ids, ts: Date.now() }));
+        console.log(`[Prefetch] Đã cache ${ids.length} ảnh cho: ${nextLoc.name}`);
+        break;
+      }
+    } catch(e) {
+      console.warn('[Prefetch] Thất bại, bỏ qua:', e);
+    }
+  }
+
+  // Chạy ngầm khi user ở start screen, cache trước N locations
+  async function prefetchBatch(locations, count = 5) {
+    const sessionId = currentGameSessionId;
+    const targets = locations.slice(0, count);
+    
+    for (const loc of targets) {
+      if (sessionId !== currentGameSessionId) return;
+      let ids = [];
+      // Kiểm tra cache trước
+      try {
+        const storedStr = localStorage.getItem('mly_cache_v2_' + loc.id);
+        if (storedStr) {
+          const stored = JSON.parse(storedStr);
+          if (stored?.ids?.length > 0) ids = stored.ids;
+        }
+      } catch(e) {}
+
+      if (ids.length === 0) {
+        // Fetch nhẹ
+        try {
+          const deltas = [0.002, 0.008, 0.02];
+          let hasTriedAndFoundNone = true;
+          let hasNetworkError = false;
+
+          for (const delta of deltas) {
+            if (sessionId !== currentGameSessionId) return;
+            const bbox = `${(loc.lng - delta).toFixed(6)},${(loc.lat - delta).toFixed(6)},${(loc.lng + delta).toFixed(6)},${(loc.lat + delta).toFixed(6)}`;
+            const url = `https://graph.mapillary.com/images?access_token=${nextToken()}&fields=id,geometry,is_pano&bbox=${bbox}&limit=100`;
+            
+            try {
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 10000);
+              const res = await fetch(url, { signal: controller.signal });
+              clearTimeout(timeoutId);
+              if (sessionId !== currentGameSessionId) return;
+              if (!res.ok) {
+                hasNetworkError = true;
+                hasTriedAndFoundNone = false;
+                if (res.status >= 500) break;
+                continue;
+              }
+              const data = await res.json();
+              if (sessionId !== currentGameSessionId) return;
+              if (data && data.data && data.data.length > 0) {
+                hasTriedAndFoundNone = false;
+                let panos = data.data.filter(img => img.is_pano === true);
+                let flats = data.data.filter(img => img.is_pano !== true);
+                const actualLL = L.latLng(loc.lat, loc.lng);
+                const sortByDist = (a, b) =>
+                  actualLL.distanceTo(L.latLng(a.geometry.coordinates[1], a.geometry.coordinates[0])) -
+                  actualLL.distanceTo(L.latLng(b.geometry.coordinates[1], b.geometry.coordinates[0]));
+                panos.sort(sortByDist);
+                flats.sort(sortByDist);
+
+                ids = [...panos.slice(0, 7), ...flats.slice(0, 3)].map(img => img.id);
+                localStorage.setItem('mly_cache_v2_' + loc.id, JSON.stringify({ ids, ts: Date.now() }));
+                console.log(`[Batch prefetch] Cached ${ids.length} ảnh cho: ${loc.name}`);
+                break;
+              }
+            } catch(e) {
+              hasNetworkError = true;
+              hasTriedAndFoundNone = false;
+              break;
+            }
+          }
+
+          if (sessionId !== currentGameSessionId) return;
+          if (hasTriedAndFoundNone && !hasNetworkError) {
+            try {
+              localStorage.setItem('mly_empty_' + loc.id, 'true');
+              localStorage.removeItem('mly_good_' + loc.id);
+            } catch(e){}
+            console.log(`[Batch prefetch] Blacklisted empty location: ${loc.name}`);
+          }
+          if (hasNetworkError) {
+            console.warn('[Batch prefetch] Dừng prefetch vì gặp lỗi mạng từ Mapillary.');
+            return; // Abort the rest of the batch to avoid spamming 500s
+          }
+        } catch(e) {
+          console.warn('[Batch prefetch] Thất bại:', loc.name);
+        }
+      }
+
+      if (ids.length > 0) {
+        loc.preloadedId = ids[Math.floor(Math.random() * ids.length)];
+        preloadImageTile(loc.preloadedId);
+      }
+
+      if (sessionId !== currentGameSessionId) return;
+      // Nghỉ 800ms giữa mỗi request để không spam API
+      await new Promise(r => setTimeout(r, 800));
+    }
+  }
+
   async function syncMapillaryImage(imageId, attempt = 1) {
+      if (!gameActive || !isMultiplayer) return;
+      const sessionId = currentGameSessionId;
+
+      if (el.btnRetryImg) el.btnRetryImg.style.display = 'none';
+      const spinner = el.loadingView.querySelector('.spinner');
+      if (spinner) spinner.style.display = 'block';
+
       if (!mlyViewer) {
           console.warn("Viewer chưa sẵn sàng, thử lại sau 1s...");
-          setTimeout(() => syncMapillaryImage(imageId, attempt), 1000);
+          setTimeout(() => {
+              if (sessionId !== currentGameSessionId) return;
+              syncMapillaryImage(imageId, attempt);
+          }, 1000);
           return;
       }
 
       // Delay nhỏ để giải phóng luồng chính trước khi gọi WebGL API
       await new Promise(resolve => setTimeout(resolve, 500));
+      if (sessionId !== currentGameSessionId) return;
 
       try {
           const moveToPromise = mlyViewer.moveTo(imageId);
           const timeoutPromise = new Promise((_, reject) => 
-              setTimeout(() => reject(new Error("Timeout loading image")), 12000)
+              setTimeout(() => reject(new Error("Timeout loading image")), 8000)
           );
 
           await Promise.race([moveToPromise, timeoutPromise]);
+          if (sessionId !== currentGameSessionId) return;
           el.loadingView.style.display = 'none';
+          startTimer();
       } catch (err) {
+          if (sessionId !== currentGameSessionId) return;
           console.error(`Lỗi đồng bộ ảnh Mapillary (lần thử ${attempt}):`, err);
           if (attempt < 2) {
               el.loadingText.textContent = '⚠️ Thử kết nối lại ảnh...';
-              setTimeout(() => syncMapillaryImage(imageId, attempt + 1), 2000);
+              setTimeout(() => {
+                  if (sessionId !== currentGameSessionId) return;
+                  syncMapillaryImage(imageId, attempt + 1);
+              }, 2000);
           } else {
-              el.loadingText.textContent = '⚠️ Lỗi đồng bộ ảnh! Đang báo cho Chủ phòng...';
+              if (spinner) spinner.style.display = 'none';
+              el.loadingText.textContent = '⚠️ Lỗi tải ảnh đồng bộ.';
+              if (el.btnRetryImg) {
+                  el.btnRetryImg.textContent = 'Thử lại';
+                  el.btnRetryImg.style.display = 'inline-block';
+              }
+              retryAction = () => {
+                  if (sessionId !== currentGameSessionId) return;
+                  syncMapillaryImage(imageId, 1);
+              };
               if (peerConnection && peerConnection.open) {
                   sendPeerMessage({ type: 'IMAGE_LOAD_ERROR', round: currentRound });
               }
@@ -755,12 +1732,16 @@
   function submitGuess() {
     if (!guessMarker || hasGuessed) return;
     hasGuessed = true;
+    stopTimer();
     el.btnGuess.disabled = true;
 
     const guessLL  = guessMarker.getLatLng();
     const actualLL = L.latLng(currentLoc.lat, currentLoc.lng);
     const distKm   = guessLL.distanceTo(actualLL) / 1000;
     const score    = calcScore(distKm);
+
+    // Tải trước ảnh vòng kế tiếp trong lúc user đang xem kết quả
+    if (!isMultiplayer) prefetchNextLocation();
 
     if (isMultiplayer) {
         myMultiScore += score;
@@ -774,6 +1755,20 @@
         checkMultiplayerRoundOver();
     } else {
         totalScore += score;
+
+        // Endless Mode: update streak and lives
+        if (isEndless) {
+            endlessRounds++;
+            if (score >= ENDLESS_STREAK_THRESHOLD) {
+                endlessStreak++;
+                if (endlessStreak > endlessBestStreak) endlessBestStreak = endlessStreak;
+            } else {
+                endlessStreak = 0;
+                endlessLives--;
+            }
+            updateEndlessHUD();
+        }
+
         showResult(distKm, score, guessLL, actualLL);
     }
   }
@@ -810,7 +1805,7 @@
   }
 
   function calcScore(distKm) {
-    const max = currentMode === 'Mixed' ? 1800 : 50;
+    const max = CITY_MAX_DISTANCES[currentMode] || 50;
     if (distKm >= max) return 0;
     
     // Sử dụng công thức đường cong lõm để tính điểm mượt mà hơn
@@ -827,14 +1822,27 @@
 
     $('result-score').textContent    = score.toLocaleString();
     $('result-score2').textContent   = score.toLocaleString();
-    $('result-title').textContent    = getRating(score);
-    $('result-distance').textContent = distKm < 1
-      ? `${Math.round(distKm * 1000)} m`
-      : `${distKm.toFixed(1)} km`;
     $('result-landmark-name').textContent = currentLoc.name;
     $('result-landmark-desc').textContent = currentLoc.desc || '';
 
-    $('btn-next-text').textContent = 'Tiếp tục →';
+    if (isEndless) {
+        // Build Endless-specific result title
+        const lostLife = score < ENDLESS_STREAK_THRESHOLD;
+        let title = lostLife
+            ? `💔 Mất mạng! Còn ${endlessLives} mạng`
+            : endlessStreak >= 5 ? `🔥 STREAK x${endlessStreak}! Đàng cốt!`
+            : endlessStreak >= 2 ? `⭐ Streak x${endlessStreak}! Tiếp tục!`
+            : '✅ Vòng qua!';
+        $('result-title').textContent = title;
+        $('btn-next-text').textContent = endlessLives <= 0 ? 'Xem kết quả' : 'Tiếp tục ♾️ →';
+    } else {
+        $('result-title').textContent = getRating(score);
+        $('btn-next-text').textContent = 'Tiếp tục →';
+    }
+
+    $('result-distance').textContent = distKm < 1
+      ? `${Math.round(distKm * 1000)} m`
+      : `${distKm.toFixed(1)} km`;
 
     updateHUD();
     showScreen('result');
@@ -930,29 +1938,9 @@
     resultMap.fitBounds(L.latLngBounds([myLL, oppLL, actualLL]), { padding: [40, 40] });
   }
 
-  function nextRound() {
-    if (isMultiplayer) {
-        if (!isHost) return;
-        if (currentRound >= TOTAL_ROUNDS) {
-            sendPeerMessage({ type: 'SHOW_FINAL' });
-            showFinal();
-        } else {
-            sendPeerMessage({ type: 'NEXT_ROUND' });
-            currentRound++;
-            startMultiplayerRound();
-        }
-    } else {
-        if (currentRound >= TOTAL_ROUNDS) {
-            showFinal();
-        } else {
-            currentRound++;
-            showScreen('game');
-            loadRound();
-        }
-    }
-  }
-
   function showFinal() {
+    stopTimer();
+    playWinFanfare();
     if (isMultiplayer) {
         $('final-total-score').textContent = myMultiScore.toLocaleString();
         let finalStatus = '';
@@ -962,6 +1950,14 @@
         $('final-rating').textContent = `${finalStatus} (Đối thủ: ${oppMultiScore})`;
         $('btn-restart').textContent = 'Về trang chủ';
         el.btnMultiRestart.style.display = 'block';
+        saveGameResult(myMultiScore, 'Multiplayer');
+    } else if (isEndless) {
+        $('final-total-score').textContent = totalScore.toLocaleString();
+        $('final-rating').textContent =
+            `♾️ ${endlessRounds} vòng • Best Streak 🔥${endlessBestStreak} • Tổng điểm: ${totalScore.toLocaleString()}`;
+        $('btn-restart').textContent = 'Chơi lại';
+        el.btnMultiRestart.style.display = 'none';
+        saveGameResult(totalScore, 'Endless_' + currentMode);
     } else {
         $('final-total-score').textContent = totalScore.toLocaleString();
         const pct = totalScore / (MAX_SCORE * TOTAL_ROUNDS);
@@ -974,8 +1970,40 @@
         $('final-rating').textContent = rating;
         $('btn-restart').textContent = 'Chơi lại';
         el.btnMultiRestart.style.display = 'none';
+        saveGameResult(totalScore, currentMode);
     }
     showScreen('final');
+  }
+
+  function nextRound() {
+    if (isMultiplayer) {
+        if (!isHost) return;
+        if (currentRound >= TOTAL_ROUNDS) {
+            sendPeerMessage({ type: 'SHOW_FINAL' });
+            showFinal();
+        } else {
+            sendPeerMessage({ type: 'NEXT_ROUND' });
+            currentRound++;
+            startMultiplayerRound();
+        }
+    } else if (isEndless) {
+        // Game Over khi hết mạng
+        if (endlessLives <= 0) {
+            showFinal();
+        } else {
+            currentRound++;
+            showScreen('game');
+            loadRound();
+        }
+    } else {
+        if (currentRound >= TOTAL_ROUNDS) {
+            showFinal();
+        } else {
+            currentRound++;
+            showScreen('game');
+            loadRound();
+        }
+    }
   }
 
   function getRating(score) {
@@ -993,6 +2021,8 @@
         $('total-score').textContent   = myMultiScore.toLocaleString();
         $('hud-my-score').textContent  = myMultiScore.toLocaleString();
         $('hud-opp-score').textContent = oppMultiScore.toLocaleString();
+    } else if (isEndless) {
+        $('total-score').textContent = totalScore.toLocaleString();
     } else {
         $('current-round').textContent = currentRound;
         $('total-score').textContent   = totalScore.toLocaleString();
@@ -1001,7 +2031,12 @@
 
   // ── Leaflet Guess Map ─────────────────────────────────────────────────────
   function initGuessMap() {
-    if (guessMap) { guessMap.remove(); guessMap = null; }
+    if (guessMap) {
+      if (guessMarker) { guessMap.removeLayer(guessMarker); guessMarker = null; }
+      if (resultLine)  { guessMap.removeLayer(resultLine);  resultLine  = null; }
+      guessMap.setView([16.0, 106.5], 5);
+      return;
+    }
 
     guessMap = L.map('map', {
       center: [16.0, 106.5],
@@ -1038,6 +2073,10 @@
       [arr[i], arr[j]] = [arr[j], arr[i]];
     }
     return arr;
+  }
+
+  function shuffleLocations(pool) {
+    return shuffle(pool);
   }
 
   // ── Start ─────────────────────────────────────────────────────────────────

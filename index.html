@@ -42,8 +42,8 @@
             
             <div class="play-options">
                 <div class="play-card solo-card">
-                    <h3>🏃‍♂️ Chơi Đơn (Classic)</h3>
-                    <p>Khám phá bản đồ theo tốc độ của bạn</p>
+                    <h3>♾️ Vô Tận</h3>
+                    <p>Khám phá bản đồ, giữ mạng càng lâu càng tốt</p>
                     <div class="mode-selection" id="solo-modes">
                         <button class="btn-mode" data-city="Hanoi">🏛️ Hà Nội</button>
                         <button class="btn-mode" data-city="Saigon">🌆 Sài Gòn</button>
@@ -56,6 +56,11 @@
                     <p>1vs1 thời gian thực với bạn bè</p>
                     <button id="btn-show-multiplayer" class="btn-primary btn-play-multi">Tạo Phòng</button>
                 </div>
+            </div>
+            
+            <div id="start-leaderboard" class="leaderboard-section" style="margin-top:20px; width: 100%; display:none;">
+                <h3 style="font-size:1.1rem; margin-bottom:10px; color:#fff; text-transform:uppercase;">🏆 Bảng Xếp Hạng Cá Nhân</h3>
+                <div id="start-leaderboard-list" class="leaderboard-list"></div>
             </div>
         </div>
     </div>
@@ -83,9 +88,9 @@
                 <div id="host-controls" style="display:none; margin-top:20px;">
                     <p style="margin-bottom:10px;">Đối thủ đã vào! Chọn khu vực để bắt đầu:</p>
                     <div class="mode-selection" style="justify-content:center;">
-                        <button class="btn-mode host-mode" data-city="Hanoi">Hà Nội</button>
-                        <button class="btn-mode host-mode" data-city="Saigon">Sài Gòn</button>
-                        <button class="btn-mode host-mode" data-city="Mixed">Toàn Quốc</button>
+                        <button class="btn-mode host-mode" data-city="Hanoi">🏛️ Hà Nội</button>
+                        <button class="btn-mode host-mode" data-city="Saigon">🌆 Sài Gòn</button>
+                        <button class="btn-mode host-mode" data-city="Mixed">🔀 Toàn Quốc</button>
                     </div>
                 </div>
                 <button id="btn-host-cancel" class="btn-text" style="margin-top:20px;">Hủy phòng</button>
@@ -95,13 +100,25 @@
 
     <!-- ── HUD ── -->
     <div id="hud" style="display:none;">
-        <div class="hud-item">
+        <div class="hud-item" id="hud-round-block">
             <span class="hud-label">Vòng</span>
             <span id="current-round">1</span>
+        </div>
+        <!-- Endless Mode HUD (hidden by default) -->
+        <div class="hud-item" id="hud-lives-block" style="display:none;">
+            <span id="hud-lives">❤️❤️❤️</span>
+        </div>
+        <div class="hud-item" id="hud-streak-block" style="display:none;">
+            <span class="hud-label">Streak</span>
+            <span id="hud-streak" style="color:#FFA500;">0🔥</span>
         </div>
         <div class="hud-item">
             <span class="hud-label">Điểm</span>
             <span id="total-score">0</span>
+        </div>
+        <div class="hud-item" id="timer-hud">
+            <span class="hud-label">Thời gian</span>
+            <span id="timer-value">03:00</span>
         </div>
         <div class="hud-item city-badge" id="city-badge">–</div>
         <div class="hud-item" id="multi-score-hud" style="display:none; background:rgba(0,0,0,0.8);">
@@ -117,6 +134,7 @@
         <div id="loading-view" class="loading-view">
             <div class="spinner"></div>
             <p id="loading-text">Đang tải ảnh đường phố...</p>
+            <button id="btn-retry-img" class="btn-primary" style="display:none; margin-top:15px; width:auto; padding:8px 16px; border-radius:20px; font-size:0.9rem; z-index:10;">Thử tải lại</button>
         </div>
     </div>
 
@@ -183,6 +201,12 @@
                 <label>/ 25,000 điểm</label>
             </div>
             <div id="final-rating" class="final-rating">–</div>
+            
+            <div id="final-leaderboard" class="leaderboard-section" style="margin-top:20px; width: 100%; display:none;">
+                <h3 style="font-size:1.1rem; margin-bottom:10px; color:#fff; text-transform:uppercase;">🏆 Lịch Sử Điểm Số</h3>
+                <div id="final-leaderboard-list" class="leaderboard-list"></div>
+            </div>
+
             <button id="btn-restart" class="btn-primary">Chơi lại</button>
             <button id="btn-multi-restart" class="btn-primary btn-play-multi" style="display:none;">Chơi lại với đối thủ</button>
         </div>
