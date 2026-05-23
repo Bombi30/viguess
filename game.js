@@ -122,6 +122,7 @@
   let resultMap     = null;
   let guessMarker   = null;
   let resultLine    = null;
+  let isMapInteracting = false;
   let currentRound  = 1;
   let totalScore    = 0;
   let gameLocations = [];
@@ -616,11 +617,12 @@
 
     const mapContainer = $('map-container');
     if (mapContainer) {
-      mapContainer.addEventListener('transitionend', (e) => {
-        if (e.propertyName === 'width' || e.propertyName === 'height') {
-          if (guessMap) {
-            guessMap.invalidateSize();
-          }
+      mapContainer.addEventListener('mouseenter', () => {
+        mapContainer.classList.add('active');
+      });
+      mapContainer.addEventListener('mouseleave', () => {
+        if (!isMapInteracting) {
+          mapContainer.classList.remove('active');
         }
       });
     }
@@ -723,7 +725,7 @@
 
     if (ids.length === 0) {
       try {
-        const deltas = [0.002, 0.008, 0.02];
+        const deltas = [0.0005, 0.0015, 0.003];
         let hasTriedAndFoundNone = true;
         let hasNetworkError = false;
 
@@ -738,7 +740,6 @@
             if (!res.ok) {
               hasNetworkError = true;
               hasTriedAndFoundNone = false;
-              if (res.status >= 500) break;
               continue;
             }
             const data = await res.json();
@@ -762,7 +763,7 @@
             clearTimeout(timeoutId);
             hasNetworkError = true;
             hasTriedAndFoundNone = false;
-            break;
+            continue;
           }
         }
 
@@ -1268,7 +1269,23 @@
       gameLocations.push(...shuffleLocations([...pool]));
     }
 
-    currentLoc = gameLocations[currentRound - 1];
+    // Skip blacklisted empty locations (e.g. from background prefetch)
+    while (currentRound <= gameLocations.length) {
+      currentLoc = gameLocations[currentRound - 1];
+      if (!currentLoc || !localStorage.getItem('mly_empty_' + currentLoc.id)) {
+        break;
+      }
+      console.log(`[loadRound] Skipping blacklisted empty location: ${currentLoc.name}`);
+      const pool = (currentMode === 'Mixed' ? [...LOCATIONS] : LOCATIONS.filter(l => l.city === currentMode))
+                   .filter(l => !localStorage.getItem('mly_empty_' + l.id));
+      if (pool.length > 0) {
+        currentLoc = pool[Math.floor(Math.random() * pool.length)];
+        gameLocations[currentRound - 1] = currentLoc;
+      } else {
+        break;
+      }
+    }
+
     hasGuessed = false;
 
     if (window.__vlog && currentLoc) {
@@ -1326,7 +1343,7 @@
       
       // Optimize: Use fewer, larger bounding box steps. 0.002 (approx. 200m) finds images immediately for ~95% of locations.
       // 0.008 (approx. 800m) covers the rest. Client-side sorting guarantees we still pick the closest image.
-      const deltas = [0.002, 0.008, 0.02];
+      const deltas = [0.0005, 0.0015, 0.003];
       let foundData = null;
       let hasNetworkError = false;
 
@@ -1353,14 +1370,14 @@
               } else {
                   console.warn(`Mapillary API non-200 status (${res.status}) at delta ${delta}`);
                   hasNetworkError = true;
-                  if (res.status >= 500) break;
+                  continue;
               }
           } catch (err) {
               clearTimeout(timeoutId);
               if (sessionId !== currentGameSessionId) return;
               console.warn(`Fetch error at delta ${delta}:`, err);
               hasNetworkError = true;
-              break;
+              continue;
           }
       }
 
@@ -1456,7 +1473,7 @@
     try {
       const moveToPromise = mlyViewer.moveTo(randomId);
       const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error("Timeout loading image")), 8000)
+          setTimeout(() => reject(new Error("Timeout loading image")), 15000)
       );
 
       await Promise.race([moveToPromise, timeoutPromise]);
@@ -1545,7 +1562,7 @@
 
     // Fetch nhẹ, không block UI
     try {
-      const deltas = [0.002, 0.008, 0.02];
+      const deltas = [0.0005, 0.0015, 0.003];
       for (const delta of deltas) {
         if (sessionId !== currentGameSessionId) return;
         const bbox = `${(nextLoc.lng - delta).toFixed(6)},${(nextLoc.lat - delta).toFixed(6)},${(nextLoc.lng + delta).toFixed(6)},${(nextLoc.lat + delta).toFixed(6)}`;
@@ -1597,7 +1614,7 @@
       if (ids.length === 0) {
         // Fetch nhẹ
         try {
-          const deltas = [0.002, 0.008, 0.02];
+          const deltas = [0.0005, 0.0015, 0.003];
           let hasTriedAndFoundNone = true;
           let hasNetworkError = false;
 
@@ -1615,7 +1632,6 @@
               if (!res.ok) {
                 hasNetworkError = true;
                 hasTriedAndFoundNone = false;
-                if (res.status >= 500) break;
                 continue;
               }
               const data = await res.json();
@@ -1639,7 +1655,7 @@
             } catch(e) {
               hasNetworkError = true;
               hasTriedAndFoundNone = false;
-              break;
+              continue;
             }
           }
 
@@ -1695,7 +1711,7 @@
       try {
           const moveToPromise = mlyViewer.moveTo(imageId);
           const timeoutPromise = new Promise((_, reject) => 
-              setTimeout(() => reject(new Error("Timeout loading image")), 8000)
+              setTimeout(() => reject(new Error("Timeout loading image")), 15000)
           );
 
           await Promise.race([moveToPromise, timeoutPromise]);
@@ -2022,6 +2038,7 @@
         $('hud-my-score').textContent  = myMultiScore.toLocaleString();
         $('hud-opp-score').textContent = oppMultiScore.toLocaleString();
     } else if (isEndless) {
+        $('current-round').textContent = currentRound;
         $('total-score').textContent = totalScore.toLocaleString();
     } else {
         $('current-round').textContent = currentRound;
@@ -2050,6 +2067,37 @@
     }).addTo(guessMap);
 
     L.control.zoom({ position: 'bottomright' }).addTo(guessMap);
+
+    // Setup ResizeObserver for guessMap
+    if (window.ResizeObserver) {
+      const resizeObserver = new ResizeObserver(() => {
+        guessMap.invalidateSize();
+      });
+      const mapEl = document.getElementById('map');
+      if (mapEl) {
+        resizeObserver.observe(mapEl);
+      }
+    }
+
+    // Protect active state during dragging
+    guessMap.on('dragstart', () => {
+      isMapInteracting = true;
+      const mapContainer = $('map-container');
+      if (mapContainer) {
+        mapContainer.classList.add('active');
+      }
+    });
+
+    guessMap.on('dragend', () => {
+      isMapInteracting = false;
+      const mapContainer = $('map-container');
+      if (mapContainer) {
+        const hasHover = window.matchMedia('(hover: hover)').matches;
+        if (hasHover && !mapContainer.matches(':hover')) {
+          mapContainer.classList.remove('active');
+        }
+      }
+    });
 
     guessMap.on('click', e => {
       if (hasGuessed || !gameActive) return;
