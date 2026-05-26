@@ -1,0 +1,20 @@
+{
+  "file": "test/unit/semver.test.js",
+  "hash": "d3b4e92656e66f496f034174abd53012ed00b33c",
+  "riskScore": "Low",
+  "blastRadius": 0,
+  "imports": {
+    "../../bin/tribunal-kit": [
+      "parseArgs",
+      "compareSemver",
+      "copyDir",
+      "countDir",
+      "isSelfInstall",
+      "CORE_AGENTS",
+      "CORE_SKILLS",
+      "generateIDEBridges"
+    ]
+  },
+  "dependents": [],
+  "content": "'use strict';\r\n\r\nconst { compareSemver } = require('../../bin/tribunal-kit');\r\n\r\ndescribe('compareSemver', () => {\r\n    test('returns 1 when a > b (patch)', () => {\r\n        expect(compareSemver('2.4.2', '2.4.1')).toBe(1);\r\n    });\r\n\r\n    test('returns 1 when a > b (minor)', () => {\r\n        expect(compareSemver('2.5.0', '2.4.9')).toBe(1);\r\n    });\r\n\r\n    test('returns 1 when a > b (major)', () => {\r\n        expect(compareSemver('3.0.0', '2.9.9')).toBe(1);\r\n    });\r\n\r\n    test('returns 0 when a === b', () => {\r\n        expect(compareSemver('2.4.2', '2.4.2')).toBe(0);\r\n    });\r\n\r\n    test('returns -1 when a < b (patch)', () => {\r\n        expect(compareSemver('2.4.1', '2.4.2')).toBe(-1);\r\n    });\r\n\r\n    test('returns -1 when a < b (minor)', () => {\r\n        expect(compareSemver('2.4.9', '2.5.0')).toBe(-1);\r\n    });\r\n\r\n    test('strips leading \"v\" prefix from a', () => {\r\n        expect(compareSemver('v2.4.2', '2.4.2')).toBe(0);\r\n    });\r\n\r\n    test('strips leading \"v\" prefix from b', () => {\r\n        expect(compareSemver('2.4.2', 'v2.4.2')).toBe(0);\r\n    });\r\n\r\n    test('strips leading \"v\" from both', () => {\r\n        expect(compareSemver('v2.4.3', 'v2.4.2')).toBe(1);\r\n    });\r\n\r\n    test('handles missing patch segment (treats as 0)', () => {\r\n        expect(compareSemver('2.4', '2.4.0')).toBe(0);\r\n    });\r\n});\r\n"
+}

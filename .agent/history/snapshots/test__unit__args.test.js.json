@@ -1,0 +1,20 @@
+{
+  "file": "test/unit/args.test.js",
+  "hash": "b5863d3402957aae7315537ff9845c99899eeb50",
+  "riskScore": "Low",
+  "blastRadius": 0,
+  "imports": {
+    "../../bin/tribunal-kit": [
+      "parseArgs",
+      "compareSemver",
+      "copyDir",
+      "countDir",
+      "isSelfInstall",
+      "CORE_AGENTS",
+      "CORE_SKILLS",
+      "generateIDEBridges"
+    ]
+  },
+  "dependents": [],
+  "content": "'use strict';\r\n\r\nconst { parseArgs } = require('../../bin/tribunal-kit');\r\n\r\ndescribe('parseArgs', () => {\r\n    test('parses \"init\" command', () => {\r\n        const result = parseArgs(['node', 'tribunal-kit.js', 'init']);\r\n        expect(result.command).toBe('init');\r\n        expect(result.flags).toEqual({});\r\n    });\r\n\r\n    test('parses \"update\" command', () => {\r\n        const result = parseArgs(['node', 'tribunal-kit.js', 'update']);\r\n        expect(result.command).toBe('update');\r\n    });\r\n\r\n    test('parses \"status\" command', () => {\r\n        const result = parseArgs(['node', 'tribunal-kit.js', 'status']);\r\n        expect(result.command).toBe('status');\r\n    });\r\n\r\n    test('returns null command when no args given', () => {\r\n        const result = parseArgs(['node', 'tribunal-kit.js']);\r\n        expect(result.command).toBeNull();\r\n    });\r\n\r\n    test('parses --force flag', () => {\r\n        const result = parseArgs(['node', 'tribunal-kit.js', 'init', '--force']);\r\n        expect(result.flags.force).toBe(true);\r\n    });\r\n\r\n    test('parses --quiet flag', () => {\r\n        const result = parseArgs(['node', 'tribunal-kit.js', 'init', '--quiet']);\r\n        expect(result.flags.quiet).toBe(true);\r\n    });\r\n\r\n    test('parses --dry-run flag', () => {\r\n        const result = parseArgs(['node', 'tribunal-kit.js', 'init', '--dry-run']);\r\n        expect(result.flags.dryRun).toBe(true);\r\n    });\r\n\r\n    test('parses --skip-update-check flag', () => {\r\n        const result = parseArgs(['node', 'tribunal-kit.js', 'init', '--skip-update-check']);\r\n        expect(result.flags.skipUpdateCheck).toBe(true);\r\n    });\r\n\r\n    test('parses --path=<value> flag', () => {\r\n        const result = parseArgs(['node', 'tribunal-kit.js', 'init', '--path=./my-app']);\r\n        expect(result.flags.path).toBe('./my-app');\r\n    });\r\n\r\n    test('parses --path <value> flag (space separated)', () => {\r\n        const result = parseArgs(['node', 'tribunal-kit.js', 'init', '--path', './my-app']);\r\n        expect(result.flags.path).toBe('./my-app');\r\n    });\r\n\r\n    test('ignores unknown flags gracefully', () => {\r\n        const result = parseArgs(['node', 'tribunal-kit.js', 'init', '--unknown-flag']);\r\n        expect(result.command).toBe('init');\r\n        // Unknown flags don't throw, just get silently ignored\r\n        expect(result.flags.unknownFlag).toBeUndefined();\r\n    });\r\n\r\n    test('multiple flags together', () => {\r\n        const result = parseArgs(['node', 'tribunal-kit.js', 'init', '--force', '--quiet', '--dry-run']);\r\n        expect(result.flags.force).toBe(true);\r\n        expect(result.flags.quiet).toBe(true);\r\n        expect(result.flags.dryRun).toBe(true);\r\n    });\r\n});\r\n"
+}

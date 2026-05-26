@@ -1,0 +1,12 @@
+{
+  "file": "test/unit/swarm_dispatcher.test.js",
+  "hash": "59ea8d2f8e73dd3a384df1966e55002db2df0947",
+  "riskScore": "Low",
+  "blastRadius": 0,
+  "imports": {
+    "path": [],
+    "fs": []
+  },
+  "dependents": [],
+  "content": "const path = require('path');\r\nconst fs = require('fs');\r\n\r\ndescribe('swarm_dispatcher.js', () => {\r\n    it('should be a valid javascript file', () => {\r\n        const filePath = path.join(__dirname, '../../.agent/scripts/swarm_dispatcher.js');\r\n        expect(fs.existsSync(filePath)).toBe(true);\r\n        const content = fs.readFileSync(filePath, 'utf8');\r\n        expect(content.includes('module.exports')).toBeTruthy();\r\n    });\r\n    \r\n    // As swarm_dispatcher heavily relies on filesystem operations and child_process,\r\n    // we would use jest.mock('child_process') and jest.mock('fs') for deeper testing.\r\n    // This serves as the foundation for the swarm test suite.\r\n});\r\n"
+}

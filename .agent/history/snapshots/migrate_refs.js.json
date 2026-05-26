@@ -1,0 +1,11 @@
+{
+  "file": "migrate_refs.js",
+  "hash": "35b39052ff45b0b768fced3417c6245d9637ac18",
+  "riskScore": "Low",
+  "blastRadius": 0,
+  "imports": {
+    "fs": []
+  },
+  "dependents": [],
+  "content": "const fs = require('fs');\r\n\r\nconst filesToUpdate = [\r\n    \".agent/workflows/swarm.md\",\r\n    \".agent/workflows/session.md\",\r\n    \".agent/rules/GEMINI.md\",\r\n    \".agent/ARCHITECTURE.md\",\r\n    \".agent/agents/swarm-worker-contracts.md\",\r\n    \"AGENT_FLOW.md\",\r\n    \"CHANGELOG.md\"\r\n];\r\n\r\nlet totalChanges = 0;\r\n\r\nfor (const filepath of filesToUpdate) {\r\n    if (!fs.existsSync(filepath)) continue;\r\n    let content = fs.readFileSync(filepath, 'utf8');\r\n    \r\n    // Explicit python calls\r\n    content = content.replace(/python \\.agent\\/scripts\\/swarm_dispatcher\\.py/g, 'node .agent/scripts/swarm_dispatcher.js');\r\n    content = content.replace(/python \\.agent\\/scripts\\/session_manager\\.py/g, 'node .agent/scripts/session_manager.js');\r\n    content = content.replace(/python \\.agent\\/scripts\\/minify_context\\.py/g, 'node .agent/scripts/minify_context.js');\r\n    content = content.replace(/python \\.agent\\/scripts\\/test_swarm_dispatcher\\.py/g, 'npx jest test/integration/swarm_dispatcher.test.js');\r\n    \r\n    // General filename references\r\n    content = content.replace(/swarm_dispatcher\\.py/g, 'swarm_dispatcher.js');\r\n    content = content.replace(/session_manager\\.py/g, 'session_manager.js');\r\n    content = content.replace(/minify_context\\.py/g, 'minify_context.js');\r\n    content = content.replace(/test_swarm_dispatcher\\.py/g, 'swarm_dispatcher.test.js');\r\n\r\n    fs.writeFileSync(filepath, content, 'utf8');\r\n    totalChanges++;\r\n}\r\nconsole.log(`Updated ${totalChanges} files.`);\r\n"
+}

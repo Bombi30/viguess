@@ -1,0 +1,171 @@
+---
+name: game-design-expert
+description: Game Design, UX, and Flow State mastery. Replaces fragmented legacy skills. Core gameplay loop design, 3Cs (Character, Camera, Controls), input buffering, coyote time, juice (game feel), telemetry tracking, narrative alignment, and audio spatialization integration. Use when crafting player experience, progression arcs, or systemic balance.
+allowed-tools: Read, Write, Edit, Glob, Grep
+version: 2.0.0
+last-updated: 2026-04-02
+applies-to-model: gemini-2.5-pro, claude-3-7-sonnet
+---
+
+## Hallucination Traps (Read First)
+- ❌ Designing reward systems without testing for compulsion loops -> ✅ Playtesting must verify engagement without addiction patterns
+- ❌ Assuming all players have the same skill level -> ✅ Design difficulty curves that adapt or offer accessibility options
+- ❌ Adding mechanics without testing the core loop first -> ✅ Core loop must be fun in isolation before adding complexity
+
+---
+
+
+# Game Design Expert — Player Experience & Flow Mastery
+
+---
+
+## 1. The 3Cs (Character, Camera, Controls)
+
+Before designing enemies, levels, or UI, the foundation of the player's interaction MUST feel flawless. If the player cannot intrinsically trust the controls, the entire system collapses.
+
+### Input Buffering
+Humans cannot click buttons flawlessly on the exact required frame.
+If a player presses "Jump" 3 frames *before* they hit the ground, a naïve engine ignores it. A designed engine *buffers* the input in memory for 150ms and instantly executes the jump the millisecond the character's feet touch the dirt.
+
+### Coyote Time
+Named after Wile E. Coyote hovering off a cliff.
+If a player runs off a ledge, a rigid physics engine drops them instantly.
+A forgiving design allows the player to still press 'Jump' for exactly ~100ms *after* walking off the ledge. It prevents extreme frustration on close platforming jumps.
+
+---
+
+## 2. The Core Gameplay Loop
+
+Every action a player takes must feed into a reinforcing psychological loop. 
+
+**The Macro Loop (e.g., Destiny, Monster Hunter)**
+1. **Action:** Fight complex monsters.
+2. **Reward:** Collect physical parts and resources.
+3. **Pacing:** Return to base.
+4. **Upgrade:** Convert parts into stronger weapons.
+5. **Goal:** Fight stronger, unkillable monsters (Back to Step 1).
+
+*If step 4 (Upgrading) does not heavily alter step 1 (Fights are now faster, visually different, mechanically superior), the loop is broken and players churn.*
+
+---
+
+## 3. "Juice" and Game Feel 
+
+"Juice" is the non-functional audiovisual feedback that makes an interaction feel heavy and satisfying.
+
+1. **Screen Shake:** A minor, mathematically decaying camera displacement when heavy impacts occur. (Needs toggles for accessibility).
+2. **Hitstop (Sleep Frames):** When a sword hits an enemy, freeze the entire game engine for exactly 3 frames (50ms). This creates an immense perceptual illusion of resistance and friction.
+3. **Squash and Stretch:** A character jumping should stretch vertically. A character landing should squash horizontally. It breaks rigidity and infuses life.
+4. **Particle Explosions:** Simple box collisions must be masked by explosive localized particle systems (dust kicks, sparks).
+
+---
+
+## 4. Narrative & Audio Synergies
+
+Game design is not segregated from Audio. Audio is the primary vector for temporal feedback.
+
+1. **Spatialization (HRTF):** Sound objects emit audio localized strictly to 3D space, heavily attenuated by environmental occlusions (muffled behind walls).
+2. **Telegraphing State:** If an enemy swings a heavy axe, it MUST have a 300ms audio "wind-up" queue. The player relies on audio rhythm far faster than visual recognition to dodge.
+3. **Dynamic Mixing (Ducking):** Essential dialogue or UI pings must automatically compress (lower the volume of) ambient music underneath to prevent cognitive overload.
+
+---
+
+## 5. Telemetry & Analytics Deficiencies
+
+Design is hypotheses. Playtests are the reality.
+
+Never rely on developers "feeling" the game. You must systematically log death coordinates (heatmaps). If 80% of players die at Level 2 Trap B, your design intent (teaching the mechanic) has failed. 
+
+---
+
+
+---
+
+
+
+AI coding assistants often fall into specific bad habits when dealing with this domain. These are strictly forbidden:
+
+1. **Over-engineering:** Proposing complex abstractions or distributed systems when a simpler approach suffices.
+2. **Hallucinated Libraries/Methods:** Using non-existent methods or packages. Always `// VERIFY` or check `package.json` / `requirements.txt`.
+3. **Skipping Edge Cases:** Writing the "happy path" and ignoring error handling, timeouts, or data validation.
+4. **Context Amnesia:** Forgetting the user's constraints and offering generic advice instead of tailored solutions.
+5. **Silent Degradation:** Catching and suppressing errors without logging or re-raising.
+
+---
+
+
+
+**Slash command: `/review` or `/tribunal-full`**
+**Active reviewers: `logic-reviewer` · `security-auditor`**
+
+### ❌ Forbidden AI Tropes
+
+1. **Blind Assumptions:** Never make an assumption without documenting it clearly with `// VERIFY: [reason]`.
+2. **Silent Degradation:** Catching and suppressing errors without logging or handling.
+3. **Context Amnesia:** Forgetting the user's constraints and offering generic advice instead of tailored solutions.
+
+
+
+Review these questions before confirming output:
+```
+✅ Did I rely ONLY on real, verified tools and methods?
+✅ Is this solution appropriately scoped to the user's constraints?
+✅ Did I handle potential failure modes and edge cases?
+✅ Have I avoided generic boilerplate that doesn't add value?
+```
+
+### 🛑 Verification-Before-Completion (VBC) Protocol
+
+**CRITICAL:** You must follow a strict "evidence-based closeout" state machine.
+- ❌ **Forbidden:** Declaring a task complete because the output "looks correct."
+- ✅ **Required:** You are explicitly forbidden from finalizing any task without providing **concrete evidence** (terminal output, passing tests, compile success, or equivalent proof) that your output works as intended.
+
+
+## Pre-Flight Checklist
+- [ ] Have I reviewed the user's specific constraints and requests?
+- [ ] Have I checked the environment for relevant existing implementations?
+
+## VBC Protocol (Verification-Before-Completion)
+You MUST verify existing code signatures and variables before attempting to modify or call them. No hallucination is permitted.
+
+
+---
+
+## 🤖 LLM-Specific Traps
+
+AI coding assistants often fall into specific bad habits when dealing with this domain. These are strictly forbidden:
+
+1. **Over-engineering:** Proposing complex abstractions or distributed systems when a simpler approach suffices.
+2. **Hallucinated Libraries/Methods:** Using non-existent methods or packages. Always `// VERIFY` or check `package.json` / `requirements.txt`.
+3. **Skipping Edge Cases:** Writing the "happy path" and ignoring error handling, timeouts, or data validation.
+4. **Context Amnesia:** Forgetting the user's constraints and offering generic advice instead of tailored solutions.
+5. **Silent Degradation:** Catching and suppressing errors without logging or re-raising.
+
+---
+
+## 🏛️ Tribunal Integration (Anti-Hallucination)
+
+**Slash command: `/review` or `/tribunal-full`**
+**Active reviewers: `logic-reviewer` · `security-auditor`**
+
+### ❌ Forbidden AI Tropes
+
+1. **Blind Assumptions:** Never make an assumption without documenting it clearly with `// VERIFY: [reason]`.
+2. **Silent Degradation:** Catching and suppressing errors without logging or handling.
+3. **Context Amnesia:** Forgetting the user's constraints and offering generic advice instead of tailored solutions.
+
+### ✅ Pre-Flight Self-Audit
+
+Review these questions before confirming output:
+```
+✅ Did I rely ONLY on real, verified tools and methods?
+✅ Is this solution appropriately scoped to the user's constraints?
+✅ Did I handle potential failure modes and edge cases?
+✅ Have I avoided generic boilerplate that doesn't add value?
+```
+
+### 🛑 Verification-Before-Completion (VBC) Protocol
+
+**CRITICAL:** You must follow a strict "evidence-based closeout" state machine.
+- ❌ **Forbidden:** Declaring a task complete because the output "looks correct."
+- ✅ **Required:** You are explicitly forbidden from finalizing any task without providing **concrete evidence** (terminal output, passing tests, compile success, or equivalent proof) that your output works as intended.

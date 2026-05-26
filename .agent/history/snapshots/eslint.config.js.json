@@ -1,0 +1,9 @@
+{
+  "file": "eslint.config.js",
+  "hash": "d80785ac22194886311daa5c82c9765de8530876",
+  "riskScore": "Low",
+  "blastRadius": 0,
+  "imports": {},
+  "dependents": [],
+  "content": "module.exports = [\n    {\n        files: [\"**/*.js\"],\n        languageOptions: {\n            ecmaVersion: \"latest\",\n            sourceType: \"commonjs\",\n            globals: {\n                require: \"readonly\",\n                module: \"readonly\",\n                process: \"readonly\",\n                __dirname: \"readonly\",\n                console: \"readonly\",\n                exports: \"readonly\",\n                setTimeout: \"readonly\",\n                clearTimeout: \"readonly\",\n                Buffer: \"readonly\",\n                describe: \"readonly\",\n                test: \"readonly\",\n                it: \"readonly\",\n                expect: \"readonly\",\n                beforeEach: \"readonly\",\n                afterEach: \"readonly\",\n                beforeAll: \"readonly\",\n                afterAll: \"readonly\",\n                jest: \"readonly\"\n            }\n        },\n        rules: {\n            \"no-unused-vars\": [\"warn\", { \"argsIgnorePattern\": \"^_\", \"varsIgnorePattern\": \"^_\", \"caughtErrorsIgnorePattern\": \"^_\" }],\n            \"no-undef\": \"error\"\n        }\n    }\n];\n"
+}

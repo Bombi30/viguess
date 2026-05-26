@@ -1,0 +1,303 @@
+---
+name: lint-and-validate
+description: Linting and validation principles for code quality enforcement.
+allowed-tools: Read, Write, Edit, Glob, Grep
+version: 1.0.0
+last-updated: 2026-03-12
+applies-to-model: gemini-2.5-pro, claude-3-7-sonnet
+---
+
+## Hallucination Traps (Read First)
+- ❌ Auto-fixing lint errors without reviewing the diff -> ✅ Some auto-fixes change logic (e.g., removing 'unused' variables that are side-effects)
+- ❌ Treating warnings as non-blocking in CI -> ✅ Warnings accumulate; enforce zero-warning policy or they become permanent
+- ❌ Running linters only on changed files -> ✅ Run on full codebase periodically; cross-file issues are only caught with full runs
+
+---
+
+
+# Linting & Validation
+
+---
+
+## Why Linting Matters
+
+Linting catches problems that code review misses:
+- Unused variables left in after refactoring
+- Missing `await` on async functions (silently returns a Promise instead of the value)
+- Inconsistent code style that makes diffs hard to read
+- Known dangerous patterns (e.g., `==` instead of `===` in JS)
+
+Run linting in CI. Every PR that merges should pass lint. A lint check that doesn't block the build is decoration.
+
+---
+
+## JavaScript / TypeScript (ESLint + Prettier)
+
+```bash
+# Install
+npm install -D eslint @typescript-eslint/eslint-plugin @typescript-eslint/parser prettier
+
+# Run
+npx eslint . --ext .ts,.tsx
+npx prettier --check .
+
+# Fix auto-fixable issues
+npx eslint . --ext .ts,.tsx --fix
+npx prettier --write .
+```
+
+**Recommended rules to enforce:**
+
+```json
+// .eslintrc.json
+{
+  "extends": [
+    "eslint:recommended",
+    "plugin:@typescript-eslint/recommended",
+    "plugin:@typescript-eslint/recommended-requiring-type-checking"
+  ],
+  "rules": {
+    "@typescript-eslint/no-explicit-any": "error",
+    "@typescript-eslint/no-floating-promises": "error",
+    "@typescript-eslint/await-thenable": "error",
+    "no-console": ["warn", { "allow": ["warn", "error"] }],
+    "eqeqeq": ["error", "always"]
+  }
+}
+```
+
+**Key rules explained:**
+
+|Rule|Why It Matters|
+|---|---|
+|`no-floating-promises`|Missing `await` on async call = silent bug|
+|`no-explicit-any`|`any` disables TypeScript's only protection|
+|`eqeqeq`|`==` has coercion surprises; `===` is always explicit|
+|`await-thenable`|Prevents `await`-ing non-async functions (always a mistake)|
+
+---
+
+## Python (Ruff)
+
+Ruff replaces flake8, black, isort, and pyupgrade in one fast tool:
+
+```bash
+# Install
+pip install ruff
+
+# Check
+ruff check .
+
+# Fix auto-fixable
+ruff check . --fix
+
+# Format (replaces black)
+ruff format .
+
+# Pre-commit config
+# .pre-commit-config.yaml
+- repo: https://github.com/astral-sh/ruff-pre-commit
+  hooks:
+    - id: ruff
+      args: [--fix]
+    - id: ruff-format
+```
+
+```toml
+# pyproject.toml
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "ANN"]
+# E: pycodestyle, F: pyflakes, I: isort, N: naming, UP: pyupgrade
+# B: bugbear (common bugs), SIM: simplify, ANN: annotations
+```
+
+---
+
+## Type Checking
+
+Linting and type checking catch different things. Run both.
+
+**TypeScript:**
+```bash
+npx tsc --noEmit   # type check without emitting files
+```
+
+**Python:**
+```bash
+mypy src/ --ignore-missing-imports
+# or
+pyright src/
+```
+
+**Required compiler options (TypeScript):**
+```json
+{
+  "compilerOptions": {
+    "strict": true,           // enables all strict checks
+    "noImplicitAny": true,   
+    "noUncheckedIndexedAccess": true,  // index access can be undefined
+    "exactOptionalPropertyTypes": true
+  }
+}
+```
+
+---
+
+## Pre-commit Integration
+
+Run linting automatically before every commit:
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    hooks:
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  - repo: local
+    hooks:
+      - id: eslint
+        name: ESLint
+        language: node
+        entry: npx eslint --ext .ts,.tsx
+        types: [javascript, ts]
+
+      - id: tsc
+        name: TypeScript
+        language: node
+        entry: npx tsc --noEmit
+        pass_filenames: false
+```
+
+---
+
+## Scripts
+
+|Script|Purpose|Run With|
+|---|---|---|
+|`scripts/lint_runner.py`|Runs project linting and reports findings|`python scripts/lint_runner.py <project_path>`|
+|`scripts/type_coverage.py`|Measures TypeScript type coverage|`python scripts/type_coverage.py <project_path>`|
+
+---
+
+## Output Format
+
+When this skill produces or reviews code, structure your output as follows:
+
+```
+━━━ Lint And Validate Report ━━━━━━━━━━━━━━━━━━━━━━━━
+Skill:       Lint And Validate
+Language:    [detected language / framework]
+Scope:       [N files · N functions]
+─────────────────────────────────────────────────
+✅ Passed:   [checks that passed, or "All clean"]
+⚠️  Warnings: [non-blocking issues, or "None"]
+❌ Blocked:  [blocking issues requiring fix, or "None"]
+─────────────────────────────────────────────────
+VBC status:  PENDING → VERIFIED
+Evidence:    [test output / lint pass / compile success]
+```
+
+**VBC (Verification-Before-Completion) is mandatory.**
+Do not mark status as VERIFIED until concrete terminal evidence is provided.
+
+---
+
+
+---
+
+
+
+AI coding assistants often fall into specific bad habits when dealing with this domain. These are strictly forbidden:
+
+1. **Over-engineering:** Proposing complex abstractions or distributed systems when a simpler approach suffices.
+2. **Hallucinated Libraries/Methods:** Using non-existent methods or packages. Always `// VERIFY` or check `package.json` / `requirements.txt`.
+3. **Skipping Edge Cases:** Writing the "happy path" and ignoring error handling, timeouts, or data validation.
+4. **Context Amnesia:** Forgetting the user's constraints and offering generic advice instead of tailored solutions.
+5. **Silent Degradation:** Catching and suppressing errors without logging or re-raising.
+
+---
+
+
+
+**Slash command: `/review` or `/tribunal-full`**
+**Active reviewers: `logic-reviewer` · `security-auditor`**
+
+### ❌ Forbidden AI Tropes
+
+1. **Blind Assumptions:** Never make an assumption without documenting it clearly with `// VERIFY: [reason]`.
+2. **Silent Degradation:** Catching and suppressing errors without logging or handling.
+3. **Context Amnesia:** Forgetting the user's constraints and offering generic advice instead of tailored solutions.
+
+
+
+Review these questions before confirming output:
+```
+✅ Did I rely ONLY on real, verified tools and methods?
+✅ Is this solution appropriately scoped to the user's constraints?
+✅ Did I handle potential failure modes and edge cases?
+✅ Have I avoided generic boilerplate that doesn't add value?
+```
+
+### 🛑 Verification-Before-Completion (VBC) Protocol
+
+**CRITICAL:** You must follow a strict "evidence-based closeout" state machine.
+- ❌ **Forbidden:** Declaring a task complete because the output "looks correct."
+- ✅ **Required:** You are explicitly forbidden from finalizing any task without providing **concrete evidence** (terminal output, passing tests, compile success, or equivalent proof) that your output works as intended.
+
+
+## Pre-Flight Checklist
+- [ ] Have I reviewed the user's specific constraints and requests?
+- [ ] Have I checked the environment for relevant existing implementations?
+
+## VBC Protocol (Verification-Before-Completion)
+You MUST verify existing code signatures and variables before attempting to modify or call them. No hallucination is permitted.
+
+
+---
+
+## 🤖 LLM-Specific Traps
+
+AI coding assistants often fall into specific bad habits when dealing with this domain. These are strictly forbidden:
+
+1. **Over-engineering:** Proposing complex abstractions or distributed systems when a simpler approach suffices.
+2. **Hallucinated Libraries/Methods:** Using non-existent methods or packages. Always `// VERIFY` or check `package.json` / `requirements.txt`.
+3. **Skipping Edge Cases:** Writing the "happy path" and ignoring error handling, timeouts, or data validation.
+4. **Context Amnesia:** Forgetting the user's constraints and offering generic advice instead of tailored solutions.
+5. **Silent Degradation:** Catching and suppressing errors without logging or re-raising.
+
+---
+
+## 🏛️ Tribunal Integration (Anti-Hallucination)
+
+**Slash command: `/review` or `/tribunal-full`**
+**Active reviewers: `logic-reviewer` · `security-auditor`**
+
+### ❌ Forbidden AI Tropes
+
+1. **Blind Assumptions:** Never make an assumption without documenting it clearly with `// VERIFY: [reason]`.
+2. **Silent Degradation:** Catching and suppressing errors without logging or handling.
+3. **Context Amnesia:** Forgetting the user's constraints and offering generic advice instead of tailored solutions.
+
+### ✅ Pre-Flight Self-Audit
+
+Review these questions before confirming output:
+```
+✅ Did I rely ONLY on real, verified tools and methods?
+✅ Is this solution appropriately scoped to the user's constraints?
+✅ Did I handle potential failure modes and edge cases?
+✅ Have I avoided generic boilerplate that doesn't add value?
+```
+
+### 🛑 Verification-Before-Completion (VBC) Protocol
+
+**CRITICAL:** You must follow a strict "evidence-based closeout" state machine.
+- ❌ **Forbidden:** Declaring a task complete because the output "looks correct."
+- ✅ **Required:** You are explicitly forbidden from finalizing any task without providing **concrete evidence** (terminal output, passing tests, compile success, or equivalent proof) that your output works as intended.

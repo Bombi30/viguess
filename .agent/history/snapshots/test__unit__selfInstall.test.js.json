@@ -1,0 +1,23 @@
+{
+  "file": "test/unit/selfInstall.test.js",
+  "hash": "65b099af8b884c6c1d174f7f70c6d836c27e02ea",
+  "riskScore": "Low",
+  "blastRadius": 0,
+  "imports": {
+    "path": [],
+    "fs": [],
+    "os": [],
+    "../../bin/tribunal-kit": [
+      "parseArgs",
+      "compareSemver",
+      "copyDir",
+      "countDir",
+      "isSelfInstall",
+      "CORE_AGENTS",
+      "CORE_SKILLS",
+      "generateIDEBridges"
+    ]
+  },
+  "dependents": [],
+  "content": "'use strict';\r\n\r\nconst path = require('path');\r\nconst fs   = require('fs');\r\nconst os   = require('os');\r\nconst { isSelfInstall } = require('../../bin/tribunal-kit');\r\n\r\ndescribe('isSelfInstall', () => {\r\n    test('returns true when target is the kit root (package root)', () => {\r\n        // The kit root is one level above bin/\r\n        const kitRoot = path.resolve(__dirname, '../../');\r\n        expect(isSelfInstall(kitRoot)).toBe(true);\r\n    });\r\n\r\n    test('returns false for an unrelated directory', () => {\r\n        expect(isSelfInstall(os.tmpdir())).toBe(false);\r\n    });\r\n\r\n    test('returns true when target package.json has name \"tribunal-kit\"', () => {\r\n        // Create a temp dir with a fake package.json mimicking the kit\r\n        const fakeKitDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fake-tk-'));\r\n        fs.writeFileSync(\r\n            path.join(fakeKitDir, 'package.json'),\r\n            JSON.stringify({ name: 'tribunal-kit', version: '1.0.0' })\r\n        );\r\n        expect(isSelfInstall(fakeKitDir)).toBe(true);\r\n        fs.rmSync(fakeKitDir, { recursive: true, force: true });\r\n    });\r\n\r\n    test('returns false when target package.json has a different name', () => {\r\n        const fakeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'other-pkg-'));\r\n        fs.writeFileSync(\r\n            path.join(fakeDir, 'package.json'),\r\n            JSON.stringify({ name: 'my-other-project', version: '1.0.0' })\r\n        );\r\n        expect(isSelfInstall(fakeDir)).toBe(false);\r\n        fs.rmSync(fakeDir, { recursive: true, force: true });\r\n    });\r\n\r\n    test('returns false when target has no package.json', () => {\r\n        const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'no-pkg-'));\r\n        expect(isSelfInstall(emptyDir)).toBe(false);\r\n        fs.rmSync(emptyDir, { recursive: true, force: true });\r\n    });\r\n});\r\n"
+}

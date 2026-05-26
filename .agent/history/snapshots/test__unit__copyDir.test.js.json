@@ -1,0 +1,23 @@
+{
+  "file": "test/unit/copyDir.test.js",
+  "hash": "1f3111ef91650adcb45b728779000c03b9bdcb3f",
+  "riskScore": "Low",
+  "blastRadius": 0,
+  "imports": {
+    "fs": [],
+    "path": [],
+    "os": [],
+    "../../bin/tribunal-kit": [
+      "parseArgs",
+      "compareSemver",
+      "copyDir",
+      "countDir",
+      "isSelfInstall",
+      "CORE_AGENTS",
+      "CORE_SKILLS",
+      "generateIDEBridges"
+    ]
+  },
+  "dependents": [],
+  "content": "'use strict';\r\n\r\nconst fs   = require('fs');\r\nconst path = require('path');\r\nconst os   = require('os');\r\nconst { copyDir, countDir } = require('../../bin/tribunal-kit');\r\n\r\nfunction makeTempDir(prefix = 'tk-test-') {\r\n    return fs.mkdtempSync(path.join(os.tmpdir(), prefix));\r\n}\r\n\r\ndescribe('countDir', () => {\r\n    let tmpDir;\r\n\r\n    beforeEach(() => {\r\n        tmpDir = makeTempDir();\r\n    });\r\n\r\n    afterEach(() => {\r\n        fs.rmSync(tmpDir, { recursive: true, force: true });\r\n    });\r\n\r\n    test('returns 0 for empty directory', () => {\r\n        expect(countDir(tmpDir)).toBe(0);\r\n    });\r\n\r\n    test('counts files at top level', () => {\r\n        fs.writeFileSync(path.join(tmpDir, 'a.txt'), 'a');\r\n        fs.writeFileSync(path.join(tmpDir, 'b.txt'), 'b');\r\n        expect(countDir(tmpDir)).toBe(2);\r\n    });\r\n\r\n    test('counts files recursively in subdirectories', () => {\r\n        const sub = path.join(tmpDir, 'sub');\r\n        fs.mkdirSync(sub);\r\n        fs.writeFileSync(path.join(tmpDir, 'top.txt'), 'top');\r\n        fs.writeFileSync(path.join(sub, 'nested.txt'), 'nested');\r\n        expect(countDir(tmpDir)).toBe(2);\r\n    });\r\n});\r\n\r\ndescribe('copyDir', () => {\r\n    let srcDir;\r\n    let destDir;\r\n\r\n    beforeEach(() => {\r\n        srcDir  = makeTempDir('tk-src-');\r\n        destDir = makeTempDir('tk-dest-');\r\n        // Remove destDir so copyDir can create it fresh\r\n        fs.rmSync(destDir, { recursive: true, force: true });\r\n    });\r\n\r\n    afterEach(() => {\r\n        fs.rmSync(srcDir,  { recursive: true, force: true });\r\n        fs.rmSync(destDir, { recursive: true, force: true });\r\n    });\r\n\r\n    test('copies files to destination', () => {\r\n        fs.writeFileSync(path.join(srcDir, 'hello.txt'), 'hello');\r\n        copyDir(srcDir, destDir);\r\n        expect(fs.existsSync(path.join(destDir, 'hello.txt'))).toBe(true);\r\n        expect(fs.readFileSync(path.join(destDir, 'hello.txt'), 'utf8')).toBe('hello');\r\n    });\r\n\r\n    test('copies nested directories recursively', () => {\r\n        const sub = path.join(srcDir, 'sub');\r\n        fs.mkdirSync(sub);\r\n        fs.writeFileSync(path.join(sub, 'nested.txt'), 'nested');\r\n        copyDir(srcDir, destDir);\r\n        expect(fs.existsSync(path.join(destDir, 'sub', 'nested.txt'))).toBe(true);\r\n    });\r\n\r\n    test('returns total file count copied', () => {\r\n        fs.writeFileSync(path.join(srcDir, 'a.txt'), 'a');\r\n        fs.writeFileSync(path.join(srcDir, 'b.txt'), 'b');\r\n        const count = copyDir(srcDir, destDir);\r\n        expect(count).toBe(2);\r\n    });\r\n\r\n    test('dry-run does NOT create destination files', () => {\r\n        fs.writeFileSync(path.join(srcDir, 'hello.txt'), 'hello');\r\n        const destDryRun = path.join(os.tmpdir(), 'tk-dryrun-' + Date.now());\r\n        copyDir(srcDir, destDryRun, true);\r\n        expect(fs.existsSync(destDryRun)).toBe(false);\r\n    });\r\n\r\n    test('dry-run still returns correct file count', () => {\r\n        fs.writeFileSync(path.join(srcDir, 'a.txt'), 'a');\r\n        fs.writeFileSync(path.join(srcDir, 'b.txt'), 'b');\r\n        const destDryRun = path.join(os.tmpdir(), 'tk-dryrun2-' + Date.now());\r\n        const count = copyDir(srcDir, destDryRun, true);\r\n        expect(count).toBe(2);\r\n    });\r\n});\r\n"
+}

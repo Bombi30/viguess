@@ -1,0 +1,140 @@
+# Auto-generated Architecture Graph by Tribunal Kit
+# DO NOT EDIT MANUALLY - Auto-updates via incremental cache
+
+"bin/tribunal-kit.js":
+  riskScore: "Medium"
+  blastRadius: 4
+  imports:
+    - "fs"
+    - "path"
+    - "https"
+    - "child_process"
+  exports:
+    - "parseArgs"
+    - "compareSemver"
+    - "copyDir"
+    - "countDir"
+    - "isSelfInstall"
+    - "CORE_AGENTS"
+    - "CORE_SKILLS"
+    - "generateIDEBridges"
+  dependents:
+    - "test/unit/args.test.js"
+    - "test/unit/copyDir.test.js"
+    - "test/unit/selfInstall.test.js"
+    - "test/unit/semver.test.js"
+"migrate_refs.js":
+  riskScore: "Low"
+  blastRadius: 0
+  imports:
+    - "fs"
+"scripts/changelog.js":
+  riskScore: "Low"
+  blastRadius: 0
+  imports:
+    - "child_process"
+    - "fs"
+    - "path"
+"scripts/sync-version.js":
+  riskScore: "Low"
+  blastRadius: 0
+  imports:
+    - "fs"
+    - "path"
+"scripts/validate-payload.js":
+  riskScore: "Low"
+  blastRadius: 0
+  imports:
+    - "fs"
+    - "path"
+"test/integration/bridges.test.js":
+  riskScore: "Low"
+  blastRadius: 0
+  imports:
+    - "child_process"
+    - "path"
+    - "fs"
+    - "os"
+"test/integration/init.test.js":
+  riskScore: "Low"
+  blastRadius: 0
+  imports:
+    - "child_process"
+    - "path"
+    - "fs"
+    - "os"
+"test/integration/routing.test.js":
+  riskScore: "Low"
+  blastRadius: 0
+  imports:
+    - "path"
+    - "fs"
+"test/integration/swarm_dispatcher.test.js":
+  riskScore: "Low"
+  blastRadius: 0
+  imports:
+    - "path"
+    - "fs"
+    - "os"
+    - "../../.agent/scripts/swarm_dispatcher.js"
+"test/integration/wave2.test.js":
+  riskScore: "Low"
+  blastRadius: 0
+  imports:
+    - "fs"
+    - "../../.agent/scripts/skill_integrator.js"
+    - "../../.agent/scripts/skill_evolution.js"
+    - "../../.agent/scripts/case_law_manager.js"
+"test/unit/args.test.js":
+  riskScore: "Low"
+  blastRadius: 0
+  imports:
+    - "../../bin/tribunal-kit"
+"test/unit/case_law_manager.test.js":
+  riskScore: "Low"
+  blastRadius: 0
+  imports:
+    - "../../.agent/scripts/case_law_manager"
+"test/unit/context_broker.test.js":
+  riskScore: "Low"
+  blastRadius: 0
+  imports:
+    - "../../.agent/scripts/context_broker"
+"test/unit/copyDir.test.js":
+  riskScore: "Low"
+  blastRadius: 0
+  imports:
+    - "fs"
+    - "path"
+    - "os"
+    - "../../bin/tribunal-kit"
+"test/unit/graph_tools.test.js":
+  riskScore: "Low"
+  blastRadius: 0
+  imports:
+    - "fs"
+    - "path"
+"test/unit/inner_loop_validator.test.js":
+  riskScore: "Low"
+  blastRadius: 0
+  imports:
+    - "../../.agent/scripts/inner_loop_validator"
+"test/unit/selfInstall.test.js":
+  riskScore: "Low"
+  blastRadius: 0
+  imports:
+    - "path"
+    - "fs"
+    - "os"
+    - "../../bin/tribunal-kit"
+"test/unit/semver.test.js":
+  riskScore: "Low"
+  blastRadius: 0
+  imports:
+    - "../../bin/tribunal-kit"
+"test/unit/swarm_dispatcher.test.js":
+  riskScore: "Low"
+  blastRadius: 0
+  imports:
+    - "path"
+    - "fs"

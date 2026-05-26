@@ -1,0 +1,317 @@
+---
+name: vue-expert
+description: Vue 3.5+ Composition API. Script setup, reactive refs, computed, watchers, composables, Pinia, Vue Router 4, Nuxt 4. Use when building Vue/Nuxt applications.
+allowed-tools: Read, Write, Edit, Glob, Grep
+version: 3.1.0
+last-updated: 2026-04-06
+---
+
+# Vue 3.5+ & Nuxt 4 — Dense Reference
+
+## Hallucination Traps (Read First)
+- ❌ Options API (`data()`, `methods:`, `computed:`) → ✅ `<script setup lang="ts">`
+- ❌ `defineComponent()` with `<script setup>` → ✅ redundant, skip it
+- ❌ `defineModel` in Vue < 3.4 → ✅ added in 3.4+
+- ❌ `ref.value` in template → ✅ auto-unwrapped in template (no `.value`)
+- ❌ `reactive()` for primitives → ✅ use `ref()` — `reactive()` breaks on reassign
+- ❌ `watch(state.count, ...)` (primitive) → ✅ `watch(() => state.count, ...)`
+- ❌ `onBeforeMount` for data fetch → ✅ use `await` directly in `<script setup>` + `<Suspense>`
+- ❌ Pinia `this.$store` → ✅ `useStore()` from `pinia`
+- ❌ `useRoute()` / `useRouter()` outside setup → ✅ only works inside `<script setup>` or composables
+
+---
+
+## `<script setup>` — The Only Way
+
+```vue
+<script setup lang="ts">
+import { ref, computed, watch, onMounted } from "vue";
+
+// Props
+const props = defineProps<{ title: string; count?: number }>();
+// With defaults:
+const props = withDefaults(defineProps<{ variant?: "primary" | "secondary" }>(), { variant: "primary" });
+
+// Emits
+const emit = defineEmits<{ update: [value: string]; delete: [id: number] }>();
+
+// v-model (Vue 3.4+)
+const modelValue = defineModel<string>();          // default model
+const count = defineModel<number>("count");         // named model
+
+// Expose to parent ref
+defineExpose({ reset: () => {}, focus: () => {} });
+</script>
+```
+
+---
+
+## Reactivity
+
+```ts
+// ref — for primitives and objects (access via .value in JS, auto-unwrap in template)
+const count = ref(0);
+count.value++;
+
+// reactive — for objects (loses reactivity on reassign/destructure)
+const state = reactive({ name: "Alice", age: 25 });
+// ❌ const { name } = state; // loses reactivity
+// ✅ const name = computed(() => state.name);
+
+// computed — cached, re-runs only when deps change
+const doubled = computed(() => count.value * 2);
+const fullName = computed({
+  get: () => `${first.value} ${last.value}`,
+  set: (v) => { [first.value, last.value] = v.split(" "); },
+});
+
+// watch
+watch(count, (newVal, oldVal) => {}); // immediate: false by default
+watch(() => props.id, fetchUser, { immediate: true });
+watchEffect(() => { console.log(count.value); }); // auto-tracks deps
+```
+
+---
+
+## Composables (Custom Hooks)
+
+```ts
+// useCounter.ts
+export function useCounter(initial = 0) {
+  const count = ref(initial);
+  const increment = () => count.value++;
+  const reset = () => (count.value = initial);
+  return { count: readonly(count), increment, reset };
+}
+
+// useAsyncData.ts
+export function useAsyncData<T>(fn: () => Promise<T>) {
+  const data = ref<T | null>(null);
+  const error = ref<Error | null>(null);
+  const loading = ref(false);
+  async function execute() {
+    loading.value = true;
+    try { data.value = await fn(); }
+    catch (e) { error.value = e as Error; }
+    finally { loading.value = false; }
+  }
+  execute();
+  return { data, error, loading, refresh: execute };
+}
+```
+
+---
+
+## Pinia
+
+```ts
+// stores/counter.ts
+import { defineStore } from "pinia";
+export const useCounterStore = defineStore("counter", () => {
+  const count = ref(0);                 // Setup Store (preferred)
+  const doubled = computed(() => count.value * 2);
+  function increment() { count.value++; }
+  return { count, doubled, increment };
+});
+
+// Usage in component:
+const store = useCounterStore();
+// ❌ const { count } = store;        // loses reactivity!
+// ✅ const count = storeToRefs(store).count;
+import { storeToRefs } from "pinia";
+const { count } = storeToRefs(store);
+
+// Persist plugin:
+import { createPinia } from "pinia";
+import piniaPluginPersistedstate from "pinia-plugin-persistedstate";
+const pinia = createPinia().use(piniaPluginPersistedstate);
+```
+
+---
+
+## Vue Router 4
+
+```ts
+// router/index.ts
+import { createRouter, createWebHistory } from "vue-router";
+const router = createRouter({
+  history: createWebHistory(),
+  routes: [
+    { path: "/", component: () => import("./views/Home.vue") }, // lazy-loaded
+    { path: "/user/:id", component: UserView, props: true },    // props:true passes params as props
+    { path: "/:pathMatch(.*)*", component: NotFound },          // 404 catch-all
+  ],
+});
+// Route guards
+router.beforeEach(async (to, from) => {
+  if (to.meta.requiresAuth && !isLoggedIn()) return { name: "Login" };
+});
+
+// In component:
+import { useRouter, useRoute } from "vue-router";
+const router = useRouter();
+const route = useRoute();
+router.push({ name: "User", params: { id: 42 } });
+const userId = route.params.id as string;
+```
+
+---
+
+## Templates
+
+```vue
+<template>
+  <!-- v-model -->
+  <input v-model="email" />
+  <MyInput v-model:title="title" v-model:count="count" />  <!-- named model -->
+  
+  <!-- v-for with key (ALWAYS set key) -->
+  <li v-for="item in items" :key="item.id">{{ item.name }}</li>
+  
+  <!-- Dynamic components -->
+  <component :is="currentTab" />
+  
+  <!-- Teleport — render in a different DOM node -->
+  <Teleport to="body"><Modal v-if="showModal" /></Teleport>
+  
+  <!-- Transition -->
+  <Transition name="fade" mode="out-in">
+    <component :is="view" :key="view" />
+  </Transition>
+  
+  <!-- Suspense (async components / composables with await) -->
+  <Suspense><AsyncComponent /><template #fallback>Loading...</template></Suspense>
+</template>
+
+<style>
+/* Transition CSS */
+.fade-enter-active, .fade-leave-active { transition: opacity 0.3s; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
+</style>
+```
+
+---
+
+## Nuxt 4
+
+```
+auto-imports:    ref, computed, useRoute, useFetch — no imports needed
+composables/:    auto-imported by filename
+server/api/:     server routes (GET/POST)
+pages/:          file-based routing
+layouts/:        layout components
+middleware/:     route guards
+```
+
+```ts
+// pages/users/[id].vue
+const { id } = useRoute().params;                       // auto-imported
+const { data, error, refresh } = await useFetch(`/api/users/${id}`, {
+  lazy: false,        // SSR: wait for data before rendering
+  server: true,       // fetch on server (default)
+  transform: (r) => r.user,
+});
+// ❌ TRAP: useFetch in Nuxt ≠ @tanstack/react-query. It's Nuxt-specific.
+// ❌ TRAP: useAsyncData key must be UNIQUE per page/component
+```
+
+---
+
+## Performance
+- ✅ Use `v-memo` for expensive list items that rarely change
+- ✅ `defineAsyncComponent(() => import("./Heavy.vue"))` for code splitting
+- ✅ `:key` on `<component :is>` forces re-mount on route change (prevents stale state)
+- ❌ Avoid deeply nested reactive objects — use `shallowRef`/`shallowReactive` for large data
+- ❌ Never mutate props — emit events instead
+
+
+---
+
+
+
+AI coding assistants often fall into specific bad habits when dealing with this domain. These are strictly forbidden:
+
+1. **Over-engineering:** Proposing complex abstractions or distributed systems when a simpler approach suffices.
+2. **Hallucinated Libraries/Methods:** Using non-existent methods or packages. Always `// VERIFY` or check `package.json` / `requirements.txt`.
+3. **Skipping Edge Cases:** Writing the "happy path" and ignoring error handling, timeouts, or data validation.
+4. **Context Amnesia:** Forgetting the user's constraints and offering generic advice instead of tailored solutions.
+5. **Silent Degradation:** Catching and suppressing errors without logging or re-raising.
+
+---
+
+
+
+**Slash command: `/review` or `/tribunal-full`**
+**Active reviewers: `logic-reviewer` · `security-auditor`**
+
+### ❌ Forbidden AI Tropes
+
+1. **Blind Assumptions:** Never make an assumption without documenting it clearly with `// VERIFY: [reason]`.
+2. **Silent Degradation:** Catching and suppressing errors without logging or handling.
+3. **Context Amnesia:** Forgetting the user's constraints and offering generic advice instead of tailored solutions.
+
+
+
+Review these questions before confirming output:
+```
+✅ Did I rely ONLY on real, verified tools and methods?
+✅ Is this solution appropriately scoped to the user's constraints?
+✅ Did I handle potential failure modes and edge cases?
+✅ Have I avoided generic boilerplate that doesn't add value?
+```
+
+### 🛑 Verification-Before-Completion (VBC) Protocol
+
+**CRITICAL:** You must follow a strict "evidence-based closeout" state machine.
+- ❌ **Forbidden:** Declaring a task complete because the output "looks correct."
+- ✅ **Required:** You are explicitly forbidden from finalizing any task without providing **concrete evidence** (terminal output, passing tests, compile success, or equivalent proof) that your output works as intended.
+
+
+## Pre-Flight Checklist
+- [ ] Have I reviewed the user's specific constraints and requests?
+- [ ] Have I checked the environment for relevant existing implementations?
+
+## VBC Protocol (Verification-Before-Completion)
+You MUST verify existing code signatures and variables before attempting to modify or call them. No hallucination is permitted.
+
+
+---
+
+## 🤖 LLM-Specific Traps
+
+AI coding assistants often fall into specific bad habits when dealing with this domain. These are strictly forbidden:
+
+1. **Over-engineering:** Proposing complex abstractions or distributed systems when a simpler approach suffices.
+2. **Hallucinated Libraries/Methods:** Using non-existent methods or packages. Always `// VERIFY` or check `package.json` / `requirements.txt`.
+3. **Skipping Edge Cases:** Writing the "happy path" and ignoring error handling, timeouts, or data validation.
+4. **Context Amnesia:** Forgetting the user's constraints and offering generic advice instead of tailored solutions.
+5. **Silent Degradation:** Catching and suppressing errors without logging or re-raising.
+
+---
+
+## 🏛️ Tribunal Integration (Anti-Hallucination)
+
+**Slash command: `/review` or `/tribunal-full`**
+**Active reviewers: `logic-reviewer` · `security-auditor`**
+
+### ❌ Forbidden AI Tropes
+
+1. **Blind Assumptions:** Never make an assumption without documenting it clearly with `// VERIFY: [reason]`.
+2. **Silent Degradation:** Catching and suppressing errors without logging or handling.
+3. **Context Amnesia:** Forgetting the user's constraints and offering generic advice instead of tailored solutions.
+
+### ✅ Pre-Flight Self-Audit
+
+Review these questions before confirming output:
+```
+✅ Did I rely ONLY on real, verified tools and methods?
+✅ Is this solution appropriately scoped to the user's constraints?
+✅ Did I handle potential failure modes and edge cases?
+✅ Have I avoided generic boilerplate that doesn't add value?
+```
+
+### 🛑 Verification-Before-Completion (VBC) Protocol
+
+**CRITICAL:** You must follow a strict "evidence-based closeout" state machine.
+- ❌ **Forbidden:** Declaring a task complete because the output "looks correct."
+- ✅ **Required:** You are explicitly forbidden from finalizing any task without providing **concrete evidence** (terminal output, passing tests, compile success, or equivalent proof) that your output works as intended.

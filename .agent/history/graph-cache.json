@@ -1,0 +1,262 @@
+{
+  "bin/tribunal-kit.js": {
+    "mtimeMs": 1777585239622.425,
+    "hash": "044b396a83a94d6d3787df1bebd6c58f6261f8b3",
+    "imports": [
+      "fs",
+      "path",
+      "https",
+      "child_process"
+    ],
+    "exports": [
+      "parseArgs",
+      "compareSemver",
+      "copyDir",
+      "countDir",
+      "isSelfInstall",
+      "CORE_AGENTS",
+      "CORE_SKILLS",
+      "generateIDEBridges"
+    ],
+    "dependents": [
+      "test/unit/args.test.js",
+      "test/unit/copyDir.test.js",
+      "test/unit/selfInstall.test.js",
+      "test/unit/semver.test.js"
+    ],
+    "riskScore": "Medium",
+    "blastRadius": 4
+  },
+  "eslint.config.js": {
+    "mtimeMs": 1777583796319.5537,
+    "hash": "d80785ac22194886311daa5c82c9765de8530876",
+    "imports": [],
+    "exports": [],
+    "dependents": [],
+    "riskScore": "Low",
+    "blastRadius": 0
+  },
+  "migrate_refs.js": {
+    "mtimeMs": 1777584044503.6833,
+    "hash": "35b39052ff45b0b768fced3417c6245d9637ac18",
+    "imports": [
+      "fs"
+    ],
+    "exports": [],
+    "dependents": [],
+    "riskScore": "Low",
+    "blastRadius": 0
+  },
+  "scripts/changelog.js": {
+    "mtimeMs": 1777583387323.24,
+    "hash": "a078be5cb402a420593b4759afdae249cde78fdf",
+    "imports": [
+      "child_process",
+      "fs",
+      "path"
+    ],
+    "exports": [],
+    "dependents": [],
+    "riskScore": "Low",
+    "blastRadius": 0
+  },
+  "scripts/sync-version.js": {
+    "mtimeMs": 1777583387323.24,
+    "hash": "222ce95e5cbce0525359105d277688cfe61c7c6c",
+    "imports": [
+      "fs",
+      "path"
+    ],
+    "exports": [],
+    "dependents": [],
+    "riskScore": "Low",
+    "blastRadius": 0
+  },
+  "scripts/validate-payload.js": {
+    "mtimeMs": 1777583387324.2456,
+    "hash": "deefae3cc5c6807b56978fc47c36b85e7db03bc6",
+    "imports": [
+      "fs",
+      "path"
+    ],
+    "exports": [],
+    "dependents": [],
+    "riskScore": "Low",
+    "blastRadius": 0
+  },
+  "test/integration/bridges.test.js": {
+    "mtimeMs": 1777583387324.2456,
+    "hash": "9941a025cf46512d813660e4a09bf304f7fce64f",
+    "imports": [
+      "child_process",
+      "path",
+      "fs",
+      "os"
+    ],
+    "exports": [],
+    "dependents": [],
+    "riskScore": "Low",
+    "blastRadius": 0
+  },
+  "test/integration/init.test.js": {
+    "mtimeMs": 1777583387326.36,
+    "hash": "43387fa138c7bdde2ee4d42d07ec3c82ed754275",
+    "imports": [
+      "child_process",
+      "path",
+      "fs",
+      "os"
+    ],
+    "exports": [],
+    "dependents": [],
+    "riskScore": "Low",
+    "blastRadius": 0
+  },
+  "test/integration/routing.test.js": {
+    "mtimeMs": 1777583387327.369,
+    "hash": "aa8ff34289fee5be72e1d3f97083944f8f731dbd",
+    "imports": [
+      "path",
+      "fs"
+    ],
+    "exports": [],
+    "dependents": [],
+    "riskScore": "Low",
+    "blastRadius": 0
+  },
+  "test/integration/swarm_dispatcher.test.js": {
+    "mtimeMs": 1777584098830.7102,
+    "hash": "959cf59504544f624aea7ccad55fe2d9dc25ca4d",
+    "imports": [
+      "path",
+      "fs",
+      "os",
+      "../../.agent/scripts/swarm_dispatcher.js"
+    ],
+    "exports": [],
+    "dependents": [],
+    "riskScore": "Low",
+    "blastRadius": 0
+  },
+  "test/integration/wave2.test.js": {
+    "mtimeMs": 1777584104244.1404,
+    "hash": "703c635a4a0091e20785c3418b1ab294607a1635",
+    "imports": [
+      "fs",
+      "../../.agent/scripts/skill_integrator.js",
+      "../../.agent/scripts/skill_evolution.js",
+      "../../.agent/scripts/case_law_manager.js"
+    ],
+    "exports": [],
+    "dependents": [],
+    "riskScore": "Low",
+    "blastRadius": 0
+  },
+  "test/unit/args.test.js": {
+    "mtimeMs": 1777583387329.4229,
+    "hash": "b5863d3402957aae7315537ff9845c99899eeb50",
+    "imports": [
+      "../../bin/tribunal-kit"
+    ],
+    "exports": [],
+    "dependents": [],
+    "riskScore": "Low",
+    "blastRadius": 0
+  },
+  "test/unit/case_law_manager.test.js": {
+    "mtimeMs": 1777583387329.4229,
+    "hash": "172bdb2790ea2305d176f44b4d48826343e3fdc0",
+    "imports": [
+      "../../.agent/scripts/case_law_manager"
+    ],
+    "exports": [],
+    "dependents": [],
+    "riskScore": "Low",
+    "blastRadius": 0
+  },
+  "test/unit/context_broker.test.js": {
+    "mtimeMs": 1777585177453.438,
+    "hash": "5fa154b5885a89376a937bd4825b1ba5643c92f6",
+    "imports": [
+      "../../.agent/scripts/context_broker"
+    ],
+    "exports": [],
+    "dependents": [],
+    "riskScore": "Low",
+    "blastRadius": 0
+  },
+  "test/unit/copyDir.test.js": {
+    "mtimeMs": 1777583387330.4292,
+    "hash": "1f3111ef91650adcb45b728779000c03b9bdcb3f",
+    "imports": [
+      "fs",
+      "path",
+      "os",
+      "../../bin/tribunal-kit"
+    ],
+    "exports": [],
+    "dependents": [],
+    "riskScore": "Low",
+    "blastRadius": 0
+  },
+  "test/unit/graph_tools.test.js": {
+    "mtimeMs": 1777583387330.4292,
+    "hash": "08b5b30f66169e34f86a9b8ad9aa842e0917f218",
+    "imports": [
+      "fs",
+      "path"
+    ],
+    "exports": [],
+    "dependents": [],
+    "riskScore": "Low",
+    "blastRadius": 0
+  },
+  "test/unit/inner_loop_validator.test.js": {
+    "mtimeMs": 1777585153973.2224,
+    "hash": "48487187be036a1448dcb2089cb17d01258f964f",
+    "imports": [
+      "../../.agent/scripts/inner_loop_validator"
+    ],
+    "exports": [],
+    "dependents": [],
+    "riskScore": "Low",
+    "blastRadius": 0
+  },
+  "test/unit/selfInstall.test.js": {
+    "mtimeMs": 1777583387331.756,
+    "hash": "65b099af8b884c6c1d174f7f70c6d836c27e02ea",
+    "imports": [
+      "path",
+      "fs",
+      "os",
+      "../../bin/tribunal-kit"
+    ],
+    "exports": [],
+    "dependents": [],
+    "riskScore": "Low",
+    "blastRadius": 0
+  },
+  "test/unit/semver.test.js": {
+    "mtimeMs": 1777583387332.7576,
+    "hash": "d3b4e92656e66f496f034174abd53012ed00b33c",
+    "imports": [
+      "../../bin/tribunal-kit"
+    ],
+    "exports": [],
+    "dependents": [],
+    "riskScore": "Low",
+    "blastRadius": 0
+  },
+  "test/unit/swarm_dispatcher.test.js": {
+    "mtimeMs": 1777583387332.7576,
+    "hash": "59ea8d2f8e73dd3a384df1966e55002db2df0947",
+    "imports": [
+      "path",
+      "fs"
+    ],
+    "exports": [],
+    "dependents": [],
+    "riskScore": "Low",
+    "blastRadius": 0
+  }
+}

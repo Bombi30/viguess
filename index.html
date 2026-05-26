@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ViGuess – Thử thách địa lý Việt Nam</title>
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,400;0,700;0,900;1,400;1,700;1,900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-    <link rel="stylesheet" href="https://unpkg.com/mapillary-js@4.1.2/dist/mapillary.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha384-sHL9NAb7lN7rfvG5lfHpm643Xkcjzp4jFvuavGOndn6pjVqS6ny56CAt3nsEVT4H" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://unpkg.com/mapillary-js@4.1.2/dist/mapillary.css" integrity="sha384-IamMZxz60pSNzUk3cW2nl3uYUdpiDoQpLJrBoAAezEE+QaOYCVA9rfi/8Cx0x15T" crossorigin="anonymous">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -42,8 +42,8 @@
             
             <div class="play-options">
                 <div class="play-card solo-card">
-                    <h3>♾️ Vô Tận</h3>
-                    <p>Khám phá bản đồ, giữ mạng càng lâu càng tốt</p>
+                    <h3>♾️ Endless Mode</h3>
+                    <p>Giữ streak lâu nhất có thể (> 3000đ/vòng)</p>
                     <div class="mode-selection" id="solo-modes">
                         <button class="btn-mode" data-city="Hanoi">🏛️ Hà Nội</button>
                         <button class="btn-mode" data-city="Saigon">🌆 Sài Gòn</button>
@@ -69,13 +69,13 @@
     <!-- ── Multiplayer Lobby ── -->
     <div id="lobby-screen" class="overlay">
         <div class="overlay-content" style="max-width:400px;">
-            <h2>⚔️ Đấu Đối Kháng</h2>
+            <h2>⚔️ Đối Kháng</h2>
             
             <div id="lobby-menu">
-                <p>Mời bạn bè cùng chơi (Peer-to-Peer)</p>
+                <p>Mời bạn bè cùng chơi</p>
                 <button id="btn-create-room" class="btn-primary" style="width:100%; margin-bottom:10px; margin-top:15px;">Tạo Phòng Mới</button>
                 <div style="display:flex; gap:10px; margin-top:20px;">
-                    <input type="text" id="room-code-input" placeholder="Nhập mã phòng..." style="flex:1; text-transform:uppercase;" autocomplete="off" maxlength="6">
+                    <input type="text" id="room-code-input" placeholder="Mã phòng..." style="flex:1; text-transform:uppercase;" autocomplete="off" maxlength="6">
                     <button id="btn-join-room" class="btn-primary">Vào</button>
                 </div>
                 <button id="btn-lobby-back" class="btn-text" style="margin-top:20px;">← Quay lại</button>
@@ -85,6 +85,31 @@
                 <p>Mã Phòng của bạn:</p>
                 <h1 id="host-room-code" style="letter-spacing:5px; color:#FFE53B; font-size:3rem; margin:10px 0;">----</h1>
                 <p class="hint-text" id="host-status">Đang chờ đối thủ tham gia...</p>
+                
+                <div id="lobby-settings" style="margin-top: 15px; margin-bottom: 10px; background: rgba(0, 0, 0, 0.2); padding: 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.06); text-align: left; width: 100%;">
+                    <h4 style="margin: 0 0 10px 0; color: #fff; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 0.5px;">⚙️ Thiết lập trận đấu</h4>
+                    <div class="settings-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                        <div>
+                            <label style="display: block; font-size: 0.75rem; color: var(--text-dim); margin-bottom: 4px;">Số vòng đấu</label>
+                            <select id="lobby-rounds-select" style="width: 100%; background: #111; border: 1px solid #333; color: #fff; border-radius: 8px; padding: 6px; outline: none; font-size: 0.85rem; font-weight: bold; cursor: pointer;">
+                                <option value="3">3 Vòng</option>
+                                <option value="5" selected>5 Vòng</option>
+                                <option value="7">7 Vòng</option>
+                                <option value="10">10 Vòng</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="display: block; font-size: 0.75rem; color: var(--text-dim); margin-bottom: 4px;">Thời gian vòng</label>
+                            <select id="lobby-timer-select" style="width: 100%; background: #111; border: 1px solid #333; color: #fff; border-radius: 8px; padding: 6px; outline: none; font-size: 0.85rem; font-weight: bold; cursor: pointer;">
+                                <option value="30">30 Giây</option>
+                                <option value="60">1 Phút</option>
+                                <option value="90">1.5 Phút</option>
+                                <option value="120">2 Phút</option>
+                                <option value="180" selected>3 Phút</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
                 
                 <div id="host-controls" style="display:none; margin-top:20px;">
                     <p style="margin-bottom:10px;">Đối thủ đã vào! Chọn khu vực để bắt đầu:</p>
@@ -216,9 +241,10 @@
 
 </div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://unpkg.com/mapillary-js@4.1.2/dist/mapillary.js"></script>
-<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js" integrity="sha384-g4NTh/Iv5PPU4xPyhEWqPcwtNXOvdaDI8LLnyYfyNZOjKJeYQyjzQ9X5275eBjpt" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/mapillary-js@4.1.2/dist/mapillary.js" integrity="sha384-1AlAxcgdzKreJ5f2K+t7SW3pEE0ek9u3lUwlZXX+v+FtEk1tWSg6DBVLb3ZKhpB+" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js" integrity="sha384-PMNj1TmCgXfW24/rfIyxYSAWwj2mffkMfguUWv08iNFcy0kTC0JN7E/tE+pJ7+fa" crossorigin="anonymous"></script>
 <script src="locations.js"></script>
 <script src="game.js"></script>
 </body>

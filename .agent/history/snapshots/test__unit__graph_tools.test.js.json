@@ -1,0 +1,12 @@
+{
+  "file": "test/unit/graph_tools.test.js",
+  "hash": "08b5b30f66169e34f86a9b8ad9aa842e0917f218",
+  "riskScore": "Low",
+  "blastRadius": 0,
+  "imports": {
+    "fs": [],
+    "path": []
+  },
+  "dependents": [],
+  "content": "const fs = require('fs');\r\nconst path = require('path');\r\n\r\ndescribe('Knowledge Graph Tools', () => {\r\n    describe('graph_builder.js', () => {\r\n        it('should exist and be executable', () => {\r\n            const builderPath = path.join(__dirname, '../../.agent/scripts/graph_builder.js');\r\n            expect(fs.existsSync(builderPath)).toBe(true);\r\n            const content = fs.readFileSync(builderPath, 'utf8');\r\n            expect(content).toContain('function main()');\r\n            expect(content).toContain('function walkDir');\r\n            expect(content).toContain('isExcluded');\r\n        });\r\n    });\r\n\r\n    describe('graph_zoom.js', () => {\r\n        it('should exist and be executable', () => {\r\n            const zoomPath = path.join(__dirname, '../../.agent/scripts/graph_zoom.js');\r\n            expect(fs.existsSync(zoomPath)).toBe(true);\r\n            const content = fs.readFileSync(zoomPath, 'utf8');\r\n            expect(content).toContain('function extractSkeleton');\r\n            // Ensure fallback logic is present\r\n            expect(content).toContain('RAW FILE FALLBACK');\r\n        });\r\n    });\r\n});\r\n"
+}

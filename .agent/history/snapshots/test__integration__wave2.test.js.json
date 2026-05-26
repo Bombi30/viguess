@@ -1,0 +1,14 @@
+{
+  "file": "test/integration/wave2.test.js",
+  "hash": "703c635a4a0091e20785c3418b1ab294607a1635",
+  "riskScore": "Low",
+  "blastRadius": 0,
+  "imports": {
+    "fs": [],
+    "../../.agent/scripts/skill_integrator.js": [],
+    "../../.agent/scripts/skill_evolution.js": [],
+    "../../.agent/scripts/case_law_manager.js": []
+  },
+  "dependents": [],
+  "content": "const { getAssociatedScript } = require('../../.agent/scripts/skill_integrator.js');\r\nconst { architecturalWeight, semanticDelta } = require('../../.agent/scripts/skill_evolution.js');\r\nconst { findAgentDir } = require('../../.agent/scripts/case_law_manager.js');\r\n\r\ndescribe('Wave 2 Scripts (Evolving Brain)', () => {\r\n    describe('skill_integrator.js', () => {\r\n        it('should correctly identify implicit JS scripts', () => {\r\n            // we mock fs internally if we wanted to true unit test, but for now just check exports\r\n            expect(typeof getAssociatedScript).toBe('function');\r\n        });\r\n    });\r\n\r\n    describe('skill_evolution.js', () => {\r\n        it('should assign higher architectural weight to classes and interfaces', () => {\r\n            expect(architecturalWeight('class User {')).toBeGreaterThanOrEqual(2);\r\n            expect(architecturalWeight('interface Data {')).toBeGreaterThanOrEqual(2);\r\n        });\r\n\r\n        it('should assign 0 weight to noise patterns like comments and imports', () => {\r\n            expect(architecturalWeight('// this is a comment')).toBe(0);\r\n            expect(architecturalWeight('import { foo } from \"fs\";')).toBe(0);\r\n            expect(architecturalWeight('')).toBe(0);\r\n        });\r\n\r\n        it('should successfully filter a semantic delta', () => {\r\n            const rawDiff = `\r\n@@ -1,3 +1,4 @@\r\n import { foo } from 'fs';\r\n+import { baz } from 'fs';\r\n class Foo {\r\n-    // old comment\r\n+    // new comment\r\n+    export class Baz {}\r\n }\r\n            `.trim();\r\n\r\n            const delta = semanticDelta(rawDiff, 2);\r\n            // It gets kept because the hunk contains 'export class Baz {}'\r\n            expect(delta).toContain('import { baz }');\r\n            expect(delta).toContain('export class Baz {}');\r\n        });\r\n    });\r\n\r\n    describe('case_law_manager.js', () => {\r\n        it('should extract tags', () => {\r\n            const { extractTags } = require('../../.agent/scripts/case_law_manager.js');\r\n            expect(typeof extractTags).toBe('function');\r\n            expect(extractTags('hello world and foo bar')).toContain('hello');\r\n            expect(extractTags('hello world and foo bar')).not.toContain('and');\r\n        });\r\n        it('should find agent diff', () => {\r\n             expect(typeof findAgentDir).toBe('function');\r\n        });\r\n    });\r\n});\r\n"
+}
