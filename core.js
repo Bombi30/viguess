@@ -1,783 +1,3 @@
-// ViGuessr – Game Logic (Mapillary + Leaflet)
-(function () {
-  'use strict';
-
-  // ── Session Logger (xóa khi release) ─────────────────────────────────────
-  (function setupLogger() {
-    const isDebug = localStorage.getItem('viguess_debug') === 'true' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-    if (!isDebug) return;
-
-    const logs = [];
-    const t0 = Date.now();
-
-    function log(type, data) {
-      logs.push({ t: Date.now() - t0, type, ...data });
-    }
-
-    // Patch fetch — track từng Mapillary API call
-    const _fetch = window.fetch;
-    window.fetch = async function(url, opts) {
-      if (typeof url === 'string' && url.includes('graph.mapillary.com/images')) {
-        const bbox = url.match(/bbox=([^&]+)/)?.[1] ?? '';
-        const t = Date.now();
-        log('fetch_start', { url: url.substring(0, 120), bbox });
-        try {
-          const res = await _fetch(url, opts);
-          const clone = res.clone();
-          clone.json().then(d => {
-            log('fetch_done', {
-              bbox,
-              status: res.status,
-              count: d?.data?.length ?? 0,
-              ms: Date.now() - t
-            });
-          }).catch(() => log('fetch_parse_err', { ms: Date.now() - t }));
-          return res;
-        } catch(e) {
-          log('fetch_error', { bbox, error: e.message, ms: Date.now() - t });
-          throw e;
-        }
-      }
-      return _fetch(url, opts);
-    };
-
-    // Patch moveTo — track WebGL load time
-    const waitViewer = setInterval(() => {
-      if (typeof mlyViewer !== 'undefined' && mlyViewer?.moveTo) {
-        clearInterval(waitViewer);
-        const _moveTo = mlyViewer.moveTo.bind(mlyViewer);
-        mlyViewer.moveTo = async function(imageId) {
-          const t = Date.now();
-          log('moveto_start', { imageId });
-          try {
-            const r = await _moveTo(imageId);
-            log('moveto_done', { imageId, ms: Date.now() - t });
-            return r;
-          } catch(e) {
-            log('moveto_error', { imageId, error: e.message, ms: Date.now() - t });
-            throw e;
-          }
-        };
-      }
-    }, 500);
-
-
-
-    // Expose để game.js gọi được khi loadRound
-    window.__vlog = log;
-  })();
-  // ── Config ────────────────────────────────────────────────────────────────
-  const MAX_SCORE       = 5000;
-  const MAX_DIST_KM     = 50;
-  let TOTAL_ROUNDS      = 5;
-  let roundTimerLimit   = 180; // Thời gian giới hạn mỗi vòng chơi (giây)
-  const ENDLESS_LIVES              = 3;     // số mạng trong Endless
-  const ENDLESS_STREAK_THRESHOLD   = 3000;  // điểm tối thiểu để duy trì streak (tăng độ khó)
-
-  // ── State ─────────────────────────────────────────────────────────────────
-  const OBFUSCATED_TOKENS = [
-    'TUxZfDI2Mjc1MzI0MjQ4NzU4MDZ8NzgxOWQ2M2JlZTgxNzlhMDgzY2RkNzZlMjA1NTc5Njc=',
-    'TUxZfDI2NjYyMTg5OTIzNDA0MzAyfGE0NmQwM2U5ZGVmYmM3ZjYwNWEyYjA1MzA2ZjlkZmYy',
-    'TUxZfDI3Nzc4OTUzNDc1MDQwNzYwfGI3ODZiODk1ODgyYWVlOTQxY2NjNTkyMTI0MTA0NDkw',
-    'TUxZfDI3MDcwMjUzMDg1OTQxNzg5fDJhMDg4MThkM2Y2YTNmZmYyZjgwYTEzMWQ5MmEzOTdh',
-    'TUxZfDI3MjI2NTQ4MDU2OTQ5NTIyfDkwYWQ1ZGNkYTBiYjI3MjVhYzk5MGFmMTY1Y2E3NTAw',
-    'TUxZfDI3NTM0NzE0OTk2MTIwNjcyfDViOWNjNjlkMzQxYmYxYzg5ODIxNjJjOGE2NzdjZjFi',
-    'TUxZfDI3MDI1NDk4NzYzNzU4MjgxfDkxMDc4NDc1ZGNjNzg4NzBhYWI2ODMyOGEyZjE1N2U1',
-    'TUxZfDI3NDMxNDQ3NjU2NTUwMjQ2fDdiNzgxZjJhODM0NGRlZWFkNmFjYmY0ZGM4ZWNiOGIy',
-    'TUxZfDI3MDQyMDg5NDg1NDgzODUxfDBkYjg5ZmE5OTgyOTA1MmY5MWQ5ZWY4MWI3ZTMzOTQ4',
-    'TUxZfDI3MTkzMDgyNDczNjQ5NDM2fDNkN2RhNzE1NjFhNDI1N2UxNjk4ZWI1ZjI0NjcwMTAy'
-  ];
-  const DEFAULT_TOKENS = OBFUSCATED_TOKENS.map(t => atob(t));
-  let tokenIndex = 0;
-  function nextToken() {
-    const token = DEFAULT_TOKENS[tokenIndex % DEFAULT_TOKENS.length];
-    tokenIndex++;
-    return token;
-  }
-  let mlyToken = localStorage.getItem('mapillary_client_token') || DEFAULT_TOKENS[0];
-  let mlyViewer     = null;
-  let guessMap      = null;
-  let resultMap     = null;
-  let guessMarker   = null;
-  let resultLine    = null;
-  let isMapInteracting = false;
-  let currentRound  = 1;
-  let totalScore    = 0;
-  let gameLocations = [];
-  let currentLoc    = null;
-  let hasGuessed    = false;
-  let gameActive    = false;
-  let currentMode   = 'Mixed';
-  const activeFetches = new Map();
-
-  const CITY_MAX_DISTANCES = {
-    'Hanoi': 50,
-    'Saigon': 50,
-    'DaNang': 30,
-    'DaLat': 30,
-    'HoiAn': 20,
-    'VungTau': 30,
-    'NhaTrang': 30,
-    'SaPa': 20,
-    'Mixed': 1300
-  };
-  let retryAction = null;
-
-  // ── Endless Mode State ─────────────────────────────────────────────────────
-  let isEndless         = false;
-  let endlessStreak     = 0;   // streak hiện tại
-  let endlessLives      = ENDLESS_LIVES; // mạng còn lại
-  let endlessBestStreak = 0;   // streak cao nhất trong session này
-  let endlessRounds     = 0;   // số vòng đã chơi
-
-  // ── Multiplayer State ─────────────────────────────────────────────────────
-  let isMultiplayer = false;
-  let peer = null;
-  let peerConnection = null;
-  let isHost = false;
-  let myMultiScore = 0;
-  let oppMultiScore = 0;
-  let oppGuessData = null; 
-  let myGuessTemp = null;
-  let currentImageId = null;
-  let heartbeatInterval = null;
-
-  // ── Timer State ───────────────────────────────────────────────────────────
-  let timerInterval = null;
-  let timeLeft      = 180;
-  let timerActive   = false;
-  let currentGameSessionId = 0;
-
-
-
-  function sendPeerMessage(data) {
-      if (peerConnection && peerConnection.open) {
-          try {
-              peerConnection.send(data);
-          } catch (e) {
-              console.error("Lỗi gửi dữ liệu:", e);
-          }
-      } else {
-          console.warn("Kết nối chưa mở, không thể gửi:", data);
-      }
-  }
-
-  // ── Sound Synthesizer (Web Audio API) ─────────────────────────────────────
-  let audioCtx = null;
-  function getAudioContext() {
-    if (!audioCtx) {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    }
-    if (audioCtx && audioCtx.state === 'suspended') {
-      audioCtx.resume();
-    }
-    return audioCtx;
-  }
-
-  function playTick() {
-    try {
-      const ctx = getAudioContext();
-      if (!ctx) return;
-      const osc = ctx.createOscillator();
-      const gainNode = ctx.createGain();
-      
-      osc.connect(gainNode);
-      gainNode.connect(ctx.destination);
-      
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(800, ctx.currentTime);
-      
-      gainNode.gain.setValueAtTime(0.1, ctx.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.05);
-      
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.05);
-    } catch (e) {
-      console.warn("Failed to play tick sound:", e);
-    }
-  }
-
-  function playClick() {
-    try {
-      const ctx = getAudioContext();
-      if (!ctx) return;
-      const osc = ctx.createOscillator();
-      const gainNode = ctx.createGain();
-      
-      osc.connect(gainNode);
-      gainNode.connect(ctx.destination);
-      
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(600, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(300, ctx.currentTime + 0.08);
-      
-      gainNode.gain.setValueAtTime(0.08, ctx.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.08);
-      
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.08);
-    } catch (e) {
-      console.warn("Failed to play click sound:", e);
-    }
-  }
-
-  function playCorrect() {
-    try {
-      const ctx = getAudioContext();
-      if (!ctx) return;
-      
-      const now = ctx.currentTime;
-      const playNote = (freq, time, duration) => {
-        const osc = ctx.createOscillator();
-        const gainNode = ctx.createGain();
-        osc.connect(gainNode);
-        gainNode.connect(ctx.destination);
-        
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(freq, now + time);
-        
-        gainNode.gain.setValueAtTime(0, now + time);
-        gainNode.gain.linearRampToValueAtTime(0.12, now + time + 0.02);
-        gainNode.gain.exponentialRampToValueAtTime(0.001, now + time + duration);
-        
-        osc.start(now + time);
-        osc.stop(now + time + duration);
-      };
-      
-      playNote(523.25, 0, 0.12);      // C5
-      playNote(659.25, 0.08, 0.12);   // E5
-      playNote(783.99, 0.16, 0.25);   // G5
-    } catch (e) {
-      console.warn("Failed to play correct sound:", e);
-    }
-  }
-
-  function playIncorrect() {
-    try {
-      const ctx = getAudioContext();
-      if (!ctx) return;
-      const osc = ctx.createOscillator();
-      const gainNode = ctx.createGain();
-      
-      osc.connect(gainNode);
-      gainNode.connect(ctx.destination);
-      
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(220, ctx.currentTime); // A3
-      osc.frequency.linearRampToValueAtTime(110, ctx.currentTime + 0.35); // A2
-      
-      gainNode.gain.setValueAtTime(0.15, ctx.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
-      
-      osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.35);
-    } catch (e) {
-      console.warn("Failed to play incorrect sound:", e);
-    }
-  }
-
-  function createNoiseBuffer(ctx) {
-    const bufferSize = ctx.sampleRate * 2;
-    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < bufferSize; i++) {
-      data[i] = Math.random() * 2 - 1;
-    }
-    return buffer;
-  }
-
-  function playExplosion(delay = 0) {
-    try {
-      const ctx = getAudioContext();
-      if (!ctx) return;
-      const now = ctx.currentTime + delay;
-      
-      // 1. Boom
-      const osc = ctx.createOscillator();
-      const oscGain = ctx.createGain();
-      osc.connect(oscGain);
-      oscGain.connect(ctx.destination);
-      
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(150, now);
-      osc.frequency.exponentialRampToValueAtTime(10, now + 0.8);
-      
-      oscGain.gain.setValueAtTime(0.3, now);
-      oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.8);
-      
-      osc.start(now);
-      osc.stop(now + 0.8);
-      
-      // 2. Hiss
-      const noise = ctx.createBufferSource();
-      noise.buffer = createNoiseBuffer(ctx);
-      
-      const filter = ctx.createBiquadFilter();
-      filter.type = 'bandpass';
-      filter.frequency.setValueAtTime(1000, now);
-      filter.frequency.exponentialRampToValueAtTime(200, now + 1.2);
-      
-      const noiseGain = ctx.createGain();
-      noise.connect(filter);
-      filter.connect(noiseGain);
-      noiseGain.connect(ctx.destination);
-      
-      noiseGain.gain.setValueAtTime(0, now);
-      noiseGain.gain.linearRampToValueAtTime(0.2, now + 0.05);
-      noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
-      
-      noise.start(now);
-      noise.stop(now + 1.2);
-      
-      // 3. Crackles
-      for (let i = 0; i < 6; i++) {
-        const crackleTime = now + 0.2 + Math.random() * 0.5;
-        const cOsc = ctx.createOscillator();
-        const cGain = ctx.createGain();
-        cOsc.connect(cGain);
-        cGain.connect(ctx.destination);
-        
-        cOsc.type = 'sine';
-        cOsc.frequency.setValueAtTime(1200 + Math.random() * 800, crackleTime);
-        
-        cGain.gain.setValueAtTime(0.02, crackleTime);
-        cGain.gain.exponentialRampToValueAtTime(0.001, crackleTime + 0.03);
-        
-        cOsc.start(crackleTime);
-        cOsc.stop(crackleTime + 0.03);
-      }
-    } catch (e) {
-      console.warn("Failed to play explosion:", e);
-    }
-  }
-
-  function playWinFanfare() {
-    try {
-      const ctx = getAudioContext();
-      if (!ctx) return;
-      const notes = [
-        { freq: 523.25, time: 0 },
-        { freq: 659.25, time: 0.15 },
-        { freq: 783.99, time: 0.3 },
-        { freq: 1046.50, time: 0.45, duration: 0.6 }
-      ];
-      
-      notes.forEach(note => {
-        const osc = ctx.createOscillator();
-        const gainNode = ctx.createGain();
-        osc.connect(gainNode);
-        gainNode.connect(ctx.destination);
-        
-        osc.type = 'triangle';
-        osc.frequency.setValueAtTime(note.freq, ctx.currentTime + note.time);
-        
-        const dur = note.duration || 0.2;
-        gainNode.gain.setValueAtTime(0, ctx.currentTime + note.time);
-        gainNode.gain.linearRampToValueAtTime(0.12, ctx.currentTime + note.time + 0.05);
-        gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + note.time + dur);
-        
-        osc.start(ctx.currentTime + note.time);
-        osc.stop(ctx.currentTime + note.time + dur);
-      });
-      
-      playExplosion(0);
-      playExplosion(0.35);
-      playExplosion(0.7);
-      playExplosion(1.1);
-    } catch (e) {
-      console.warn("Failed to play fanfare:", e);
-    }
-  }
-
-  // ── Timer Logic ───────────────────────────────────────────────────────────
-  function startTimer() {
-    stopTimer();
-    timeLeft = roundTimerLimit;
-    timerActive = true;
-    updateTimerHUD();
-    
-    timerInterval = setInterval(() => {
-      if (!timerActive) return;
-      timeLeft--;
-      
-      updateTimerHUD();
-      
-      if (isMultiplayer && isHost) {
-        sendPeerMessage({ type: 'SYNC_TIMER', timeLeft, imageId: currentImageId });
-      }
-      
-      if (timeLeft <= 15 && timeLeft > 0) {
-        if (el.timerHud) el.timerHud.classList.add('timer-low');
-        playTick();
-      } else {
-        if (el.timerHud) el.timerHud.classList.remove('timer-low');
-      }
-      
-      if (timeLeft <= 0) {
-        stopTimer();
-        autoSubmitGuess();
-      }
-    }, 1000);
-  }
-
-  function stopTimer() {
-    timerActive = false;
-    if (timerInterval) {
-      clearInterval(timerInterval);
-      timerInterval = null;
-    }
-    if (el.timerHud) {
-      el.timerHud.classList.remove('timer-low');
-    }
-  }
-
-  function updateTimerHUD() {
-    const min = Math.floor(timeLeft / 60);
-    const sec = timeLeft % 60;
-    const valSpan = $('timer-value');
-    if (valSpan) {
-      valSpan.textContent = `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
-    }
-  }
-
-  function autoSubmitGuess() {
-    if (hasGuessed) return;
-    if (!guessMarker) {
-      guessMarker = L.marker([0, 0]);
-    }
-    submitGuess();
-  }
-
-  // ── Leaderboard Logic (localStorage) ──────────────────────────────────────
-  function getModeDisplayName(mode) {
-    const mapping = {
-      'Hanoi': '🏛️ Hà Nội',
-      'Saigon': '🌆 Sài Gòn',
-      'DaNang': '🌉 Đà Nẵng',
-      'DaLat': '🌸 Đà Lạt',
-      'HoiAn': '⛩️ Hội An',
-      'VungTau': '🏖️ Vũng Tàu',
-      'NhaTrang': '🏝️ Nha Trang',
-      'SaPa': '🏔️ Sa Pa',
-      'Mixed': '🔀 Toàn Quốc',
-      'Endless': '♾️ Vô Tận',
-      'Endless_Hanoi': '♾️ Vô Tận - Hà Nội',
-      'Endless_Saigon': '♾️ Vô Tận - Sài Gòn',
-      'Endless_DaNang': '♾️ Vô Tận - Đà Nẵng',
-      'Endless_Mixed': '♾️ Vô Tận - Toàn Quốc',
-      'Multiplayer': '⚔️ Đối Kháng',
-      'Đối Kháng': '⚔️ Đối Kháng'
-    };
-    return mapping[mode] || mode;
-  }
-
-  function saveGameResult(score, mode) {
-    try {
-      let history = [];
-      try {
-        history = JSON.parse(localStorage.getItem('viguess_history') || '[]');
-      } catch (e) {
-        history = [];
-      }
-      if (!Array.isArray(history)) history = [];
-      
-      const newGame = {
-        score: score,
-        mode: mode,
-        date: new Date().toLocaleDateString('vi-VN', { 
-          day: 'numeric', 
-          month: 'numeric', 
-          hour: '2-digit', 
-          minute: '2-digit' 
-        })
-      };
-      
-      history.unshift(newGame);
-      if (history.length > 10) {
-        history = history.slice(0, 10);
-      }
-      
-      localStorage.setItem('viguess_history', JSON.stringify(history));
-      renderLeaderboards();
-    } catch (e) {
-      console.error("Failed to save game result:", e);
-    }
-  }
-
-  function escapeHTML(str) {
-    if (typeof str !== 'string') return '';
-    return str.replace(/[&<>"']/g, m => {
-      const map = {
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#x27;'
-      };
-      return map[m];
-    });
-  }
-
-  function renderLeaderboards() {
-    try {
-      let history = [];
-      try {
-        history = JSON.parse(localStorage.getItem('viguess_history') || '[]');
-      } catch (e) {
-        history = [];
-      }
-      if (!Array.isArray(history)) history = [];
-
-      const startSection = $('start-leaderboard');
-      const finalSection = $('final-leaderboard');
-      
-      if (history.length === 0) {
-        if (startSection) startSection.style.display = 'none';
-        if (finalSection) finalSection.style.display = 'none';
-        return;
-      }
-      
-      if (startSection) startSection.style.display = 'block';
-      if (finalSection) finalSection.style.display = 'block';
-      
-      let html = '';
-      history.forEach((game, idx) => {
-        html += `
-          <div class="leaderboard-item">
-            <span class="leaderboard-rank">#${idx + 1}</span>
-            <span class="leaderboard-mode">${escapeHTML(getModeDisplayName(game.mode))}</span>
-            <span class="leaderboard-score">${escapeHTML(game.score.toLocaleString())}</span>
-            <span class="leaderboard-date">${escapeHTML(game.date)}</span>
-          </div>
-        `;
-      });
-      
-      const startList = $('start-leaderboard-list');
-      const finalList = $('final-leaderboard-list');
-      if (startList) startList.innerHTML = html;
-      if (finalList) finalList.innerHTML = html;
-    } catch (e) {
-      console.error("Failed to render leaderboards:", e);
-    }
-  }
-
-  // ── DOM helpers ───────────────────────────────────────────────────────────
-  const $  = id => document.getElementById(id);
-  const el = {
-    tokenScreen  : $('token-screen'),
-    startScreen  : $('start-screen'),
-    resultOverlay: $('result-overlay'),
-    finalScreen  : $('final-screen'),
-    hud          : $('hud'),
-    loadingView  : $('loading-view'),
-    loadingText  : $('loading-text'),
-    btnGuess     : $('btn-guess'),
-    btnShowMultiplayer: $('btn-show-multiplayer'),
-    lobbyScreen  : $('lobby-screen'),
-    btnCreateRoom: $('btn-create-room'),
-    btnJoinRoom  : $('btn-join-room'),
-    btnLobbyBack : $('btn-lobby-back'),
-    roomCodeInput: $('room-code-input'),
-    lobbyMenu    : $('lobby-menu'),
-    lobbyHostView: $('lobby-host-view'),
-    hostRoomCode : $('host-room-code'),
-    hostStatus   : $('host-status'),
-    hostControls : $('host-controls'),
-    btnHostCancel: $('btn-host-cancel'),
-    multiScoreHud: $('multi-score-hud'),
-    hudMyScore   : $('hud-my-score'),
-    hudOppScore  : $('hud-opp-score'),
-    multiWaitingText: $('multi-waiting-text'),
-    soloResultBadge: $('solo-result-badge'),
-    multiResultBadge: $('multi-result-badge'),
-    multiMyScore : $('multi-my-score'),
-    multiOppScore: $('multi-opp-score'),
-    btnMultiRestart: $('btn-multi-restart'),
-    timerHud     : $('timer-hud'),
-    btnRetryImg  : $('btn-retry-img')
-  };
-
-  // ── Bootstrap ─────────────────────────────────────────────────────────────
-  function init() {
-    Object.keys(localStorage).forEach(k => {
-      if (k.startsWith('mly_empty_') || k.startsWith('mly_good_')) {
-        localStorage.removeItem(k);
-      }
-    });
-    bindEvents();
-    renderLeaderboards();
-    if (mlyToken) {
-      initMapillary(mlyToken);
-    } else {
-      showScreen('token');
-    }
-  }
-
-  function initMapillary(token) {
-    if (mlyViewer) return;
-    
-    el.loadingView.style.display = 'flex';
-    el.loadingText.textContent = 'Đang khởi tạo Mapillary...';
-
-    try {
-      mlyViewer = new mapillary.Viewer({
-        accessToken: token,
-        container: 'street-view',
-        component: {
-          cover: false,
-          direction: true,
-          imagePlane: true,
-          sequence: true
-        }
-      });
-
-      mlyViewer.on('load', async () => {
-        el.loadingView.style.display = 'none';
-        
-        if (el.tokenScreen.classList.contains('active')) {
-            showScreen('start');
-        }
-      });
-    } catch (err) {
-      console.error(err);
-      alert('Không thể khởi tạo Mapillary. Kiểm tra Token của bạn!');
-      showScreen('token');
-    }
-  }
-
-  function showScreen(name) {
-    document.querySelectorAll('.overlay').forEach(o => o.classList.remove('active'));
-    el.hud.style.display = 'none';
-    
-    let activeOverlay = null;
-    if (name === 'token') { el.tokenScreen.classList.add('active'); activeOverlay = el.tokenScreen; }
-    if (name === 'start') {
-      el.startScreen.classList.add('active');
-      activeOverlay = el.startScreen;
-      cleanupPeer();
-      renderLeaderboards();
-    }
-    if (name === 'lobby')  { el.lobbyScreen.classList.add('active'); activeOverlay = el.lobbyScreen; }
-    if (name === 'result') { el.resultOverlay.classList.add('active'); activeOverlay = el.resultOverlay; }
-    if (name === 'final')  { el.finalScreen.classList.add('active'); activeOverlay = el.finalScreen; }
-    if (name === 'game')   { el.hud.style.display = 'flex'; }
-
-    // GSAP Modal transitions
-    if (activeOverlay && window.gsap) {
-      const content = activeOverlay.querySelector('.overlay-content');
-      if (content) {
-        gsap.killTweensOf(content);
-        gsap.fromTo(content, 
-          { opacity: 0, scale: 0.88, y: 15 },
-          { opacity: 1, scale: 1, y: 0, duration: 0.4, ease: "back.out(1.3)", clearProps: "transform,opacity" }
-        );
-      }
-    }
-    
-    // GSAP HUD transition
-    if (name === 'game' && window.gsap && el.hud) {
-      gsap.killTweensOf(el.hud);
-      gsap.fromTo(el.hud,
-        { opacity: 0, y: -20 },
-        { opacity: 1, y: 0, duration: 0.45, ease: "power2.out", clearProps: "transform,opacity" }
-      );
-    }
-  }
-
-  // ── Events ────────────────────────────────────────────────────────────────
-  function bindEvents() {
-    $('token-input').value = mlyToken;
-    $('btn-save-token').addEventListener('click', saveToken);
-    $('token-input').addEventListener('keydown', e => { if (e.key === 'Enter') saveToken(); });
-
-    document.querySelectorAll('#solo-modes .btn-mode').forEach(btn =>
-      btn.addEventListener('click', () => {
-        getAudioContext();
-        startEndlessGame(btn.dataset.city);
-      })
-    );
-
-    el.btnShowMultiplayer.addEventListener('click', () => {
-      showScreen('lobby');
-      el.lobbyMenu.style.display = 'block';
-      el.lobbyHostView.style.display = 'none';
-    });
-    
-    el.btnLobbyBack.addEventListener('click', () => showScreen('start'));
-    el.btnHostCancel.addEventListener('click', () => { cleanupPeer(); showScreen('start'); });
-    
-    el.btnCreateRoom.addEventListener('click', () => { getAudioContext(); createRoom(); });
-    el.btnJoinRoom.addEventListener('click', () => { getAudioContext(); joinRoom(); });
-    
-    document.querySelectorAll('.host-mode').forEach(btn =>
-      btn.addEventListener('click', () => { getAudioContext(); startMultiplayerGame(btn.dataset.city); })
-    );
-
-    const mapContainer = $('map-container');
-    if (mapContainer) {
-      mapContainer.addEventListener('mouseenter', () => {
-        mapContainer.classList.add('active');
-      });
-      mapContainer.addEventListener('mouseleave', () => {
-        if (!isMapInteracting) {
-          mapContainer.classList.remove('active');
-        }
-      });
-    }
-
-    $('btn-quit').addEventListener('click', () => {
-      if (confirm('Thoát game?')) { resetGame(); showScreen('start'); }
-    });
-
-    el.btnGuess.addEventListener('click', submitGuess);
-
-    $('btn-next').addEventListener('click', nextRound);
-
-    $('btn-restart').addEventListener('click', () => { resetGame(); showScreen('start'); });
-    el.btnMultiRestart.addEventListener('click', () => {
-        if (isMultiplayer && peerConnection && peerConnection.open) {
-            sendPeerMessage({ type: 'GO_TO_LOBBY' });
-            goToLobby();
-        }
-    });
-
-    if (el.btnRetryImg) {
-      el.btnRetryImg.addEventListener('click', () => {
-        if (retryAction) {
-          el.btnRetryImg.style.display = 'none';
-          const spinner = el.loadingView.querySelector('.spinner');
-          if (spinner) spinner.style.display = 'block';
-          retryAction();
-        }
-      });
-    }
-
-    const roundsSelect = $('lobby-rounds-select');
-    const timerSelect = $('lobby-timer-select');
-    if (roundsSelect) roundsSelect.addEventListener('change', syncLobbySettings);
-    if (timerSelect) timerSelect.addEventListener('change', syncLobbySettings);
-
-    document.addEventListener('click', e => {
-      const target = e.target;
-      if (target.tagName === 'BUTTON' || target.closest('.btn-mode') || target.closest('.toggle-btn') || target.closest('.play-card')) {
-        playClick();
-      }
-    });
-  }
-
-  function saveToken() {
-    const val = $('token-input').value.trim();
-    if (!val) { alert('Vui lòng nhập Mapillary Client Token!'); return; }
-    mlyToken = val;
-    localStorage.setItem('mapillary_client_token', val);
-    if (!mlyViewer) {
-      initMapillary(mlyToken);
-    } else {
-      mlyViewer.setAccessToken(mlyToken);
-      showScreen('start');
-    }
-  }
-
   // ── Game Flow ─────────────────────────────────────────────────────────────
   function startGame(mode) {
     currentGameSessionId++;
@@ -794,9 +14,7 @@
     if (mlyViewer) setTimeout(() => mlyViewer.resize(), 50);
 
     // Pick locations, filtering out empty ones from previous searches
-    const pool = (mode === 'Mixed'
-      ? [...LOCATIONS]
-      : LOCATIONS.filter(l => l.city === mode))
+    const pool = getModePool(mode)
       .filter(l => !localStorage.getItem('mly_empty_' + l.id));
 
     gameLocations = shuffleLocations([...pool]);
@@ -983,9 +201,7 @@
     
     if (mlyViewer) setTimeout(() => mlyViewer.resize(), 50);
 
-    const pool = (currentMode === 'Mixed'
-      ? [...LOCATIONS]
-      : LOCATIONS.filter(l => l.city === currentMode))
+    const pool = getModePool(currentMode)
       .filter(l => !localStorage.getItem('mly_empty_' + l.id));
 
     gameLocations = shuffleLocations([...pool]);
@@ -1274,6 +490,7 @@
             myMultiScore = 0;
             oppMultiScore = 0;
             isMultiplayer = true;
+            isEndless = false;
             el.multiScoreHud.style.display = 'flex';
             
             showScreen('game');
@@ -1282,8 +499,8 @@
         } else if (data.type === 'GUESS') {
             const g = data.guess;
             if (!g || typeof g !== 'object') return;
-            if (typeof g.lat !== 'number' || isNaN(g.lat) || g.lat < 8 || g.lat > 24) return;
-            if (typeof g.lng !== 'number' || isNaN(g.lng) || g.lng < 102 || g.lng > 110) return;
+            if (typeof g.lat !== 'number' || isNaN(g.lat)) return;
+            if (typeof g.lng !== 'number' || isNaN(g.lng)) return;
             if (typeof g.distKm !== 'number' || isNaN(g.distKm) || g.distKm < 0) return;
             if (typeof g.score !== 'number' || isNaN(g.score) || g.score < 0 || g.score > MAX_SCORE) return;
 
@@ -1300,6 +517,16 @@
             if (typeof data.imageId !== 'string' && typeof data.imageId !== 'number') return;
             currentImageId = data.imageId;
             syncMapillaryImage(data.imageId);
+        } else if (data.type === 'SKILL_MUSTARD') {
+            const sv = $('street-view');
+            if (sv) {
+                sv.style.transition = 'filter 0.5s';
+                sv.style.filter = 'blur(15px) sepia(1) hue-rotate(50deg) saturate(3)';
+                setTimeout(() => {
+                    sv.style.filter = 'none';
+                }, 4000);
+            }
+
         } else if (data.type === 'SWAP_LOCATION') {
             if (data.round === currentRound) {
                 console.log("[SWAP_LOCATION] Received new location from host:", data.newLocation.name);
@@ -1376,11 +603,11 @@
     myMultiScore = 0;
     oppMultiScore = 0;
     isMultiplayer = true;
+    isEndless = false;
     el.multiScoreHud.style.display = 'flex';
     
     // Pick exactly 5 random locations for both, filtering out empty ones
-    const pool = (mode === 'Mixed' ? [...LOCATIONS] : LOCATIONS.filter(l => l.city === mode))
-                 .filter(l => !localStorage.getItem('mly_empty_' + l.id));
+    const pool = getModePool(mode).filter(l => !localStorage.getItem('mly_empty_' + l.id));
     gameLocations = shuffleLocations([...pool]).slice(0, TOTAL_ROUNDS);
     
     sendPeerMessage({
@@ -1408,6 +635,12 @@
     
     // Reset UI
     el.multiWaitingText.style.display = 'none';
+    const btnSkill = $('btn-skill-mustard');
+    if (btnSkill) {
+        btnSkill.style.display = 'inline-block';
+        btnSkill.disabled = false;
+    }
+
     currentLoc = gameLocations[currentRound - 1];
     
     resetRoundUI();
@@ -1509,13 +742,23 @@
 
   function loadRound() {
     if (!gameActive) return;
+    
+    const btnSkill = $('btn-skill-mustard');
+    if (btnSkill) {
+        if (isEndless) {
+            btnSkill.style.display = 'inline-block';
+            btnSkill.disabled = false;
+        } else if (!isMultiplayer) {
+            btnSkill.style.display = 'none';
+        }
+    }
+
     // In endless mode we never stop for TOTAL_ROUNDS; in classic we do
     if (!isEndless && currentRound > TOTAL_ROUNDS) { showFinal(); return; }
 
     // If we run out of locations in the pool, reshuffle
     if (currentRound > gameLocations.length) {
-      const pool = (currentMode === 'Mixed' ? [...LOCATIONS] : LOCATIONS.filter(l => l.city === currentMode))
-                   .filter(l => !localStorage.getItem('mly_empty_' + l.id));
+      const pool = getModePool(currentMode).filter(l => !localStorage.getItem('mly_empty_' + l.id));
       gameLocations.push(...shuffleLocations([...pool]));
     }
 
@@ -1526,8 +769,7 @@
         break;
       }
       console.log(`[loadRound] Skipping blacklisted empty location: ${currentLoc.name}`);
-      const pool = (currentMode === 'Mixed' ? [...LOCATIONS] : LOCATIONS.filter(l => l.city === currentMode))
-                   .filter(l => !localStorage.getItem('mly_empty_' + l.id));
+      const pool = getModePool(currentMode).filter(l => !localStorage.getItem('mly_empty_' + l.id));
       if (pool.length > 0) {
         currentLoc = pool[Math.floor(Math.random() * pool.length)];
         gameLocations[currentRound - 1] = currentLoc;
@@ -1615,10 +857,9 @@
               el.loadingText.textContent = '⚠️ Khu vực này không có ảnh, đang tìm điểm khác...';
               setTimeout(() => {
                   if (sessionId !== currentGameSessionId) return;
-                  let pool = (currentMode === 'Mixed' ? [...LOCATIONS] : LOCATIONS.filter(l => l.city === currentMode))
-                               .filter(l => !localStorage.getItem('mly_empty_' + l.id));
+                  let pool = getModePool(currentMode).filter(l => !localStorage.getItem('mly_empty_' + l.id));
                   if (pool.length === 0) {
-                      pool = currentMode === 'Mixed' ? [...LOCATIONS] : LOCATIONS.filter(l => l.city === currentMode);
+                      pool = getModePool(currentMode).filter(l => !localStorage.getItem('mly_empty_' + l.id));
                   }
                   if (pool.length > 0) {
                       gameLocations[currentRound - 1] = pool[Math.floor(Math.random() * pool.length)];
@@ -1639,10 +880,9 @@
                   el.loadingText.textContent = '⚠️ Khu vực này không có ảnh, đang đổi điểm khác...';
                   setTimeout(() => {
                       if (sessionId !== currentGameSessionId) return;
-                      let pool = (currentMode === 'Mixed' ? [...LOCATIONS] : LOCATIONS.filter(l => l.city === currentMode))
-                                   .filter(l => !localStorage.getItem('mly_empty_' + l.id));
+                      let pool = getModePool(currentMode).filter(l => !localStorage.getItem('mly_empty_' + l.id));
                       if (pool.length === 0) {
-                          pool = currentMode === 'Mixed' ? [...LOCATIONS] : LOCATIONS.filter(l => l.city === currentMode);
+                          pool = getModePool(currentMode).filter(l => !localStorage.getItem('mly_empty_' + l.id));
                       }
                       if (pool.length > 0) {
                           const newLoc = pool[Math.floor(Math.random() * pool.length)];
@@ -1689,7 +929,9 @@
     if (sessionId !== currentGameSessionId) return;
 
     try {
-      const moveToPromise = mlyViewer.moveTo(randomId);
+      const moveToPromise = mlyViewer.moveTo(randomId).then(() => {
+          try { if (mlyViewer.setCenter) mlyViewer.setCenter([0.5, 0.5]); } catch(e) {}
+      });
       const timeoutPromise = new Promise((_, reject) => 
           setTimeout(() => reject(new Error("Timeout loading image")), 15000)
       );
@@ -1720,17 +962,20 @@
         localStorage.removeItem('mly_cache_v2_' + loc.id);
         localStorage.removeItem('mly_good_' + loc.id);
         
-        if (!isMultiplayer) {
+        if (!isMultiplayer || isHost) {
             el.loadingText.textContent = '⚠️ Ảnh này bị lỗi tải quá lâu, đang đổi điểm khác...';
             setTimeout(() => {
                 if (sessionId !== currentGameSessionId) return;
-                let pool = (currentMode === 'Mixed' ? [...LOCATIONS] : LOCATIONS.filter(l => l.city === currentMode))
-                             .filter(l => !localStorage.getItem('mly_empty_' + l.id));
+                let pool = getModePool(currentMode).filter(l => !localStorage.getItem('mly_empty_' + l.id));
                 if (pool.length === 0) {
-                    pool = currentMode === 'Mixed' ? [...LOCATIONS] : LOCATIONS.filter(l => l.city === currentMode);
+                    pool = getModePool(currentMode).filter(l => !localStorage.getItem('mly_empty_' + l.id));
                 }
                 if (pool.length > 0) {
-                    gameLocations[currentRound - 1] = pool[Math.floor(Math.random() * pool.length)];
+                    const newLoc = pool[Math.floor(Math.random() * pool.length)];
+                    gameLocations[currentRound - 1] = newLoc;
+                    if (isMultiplayer && isHost && peerConnection && peerConnection.open) {
+                        sendPeerMessage({ type: 'SWAP_LOCATION', round: currentRound, newLocation: newLoc });
+                    }
                     loadRound();
                 } else {
                     console.error("Critical error: No locations available on timeout fallback.");
@@ -1741,20 +986,13 @@
         } else {
             const spinner = el.loadingView.querySelector('.spinner');
             if (spinner) spinner.style.display = 'none';
-            el.loadingText.textContent = '⚠️ Ảnh này bị lỗi hoặc tải quá lâu.';
+            el.loadingText.textContent = '⚠️ Ảnh bị lỗi, đang chờ chủ phòng đổi điểm...';
             if (el.btnRetryImg) {
-                el.btnRetryImg.textContent = 'Thử ảnh khác';
-                el.btnRetryImg.style.display = 'inline-block';
+                el.btnRetryImg.style.display = 'none';
             }
-            retryAction = () => {
-                if (sessionId !== currentGameSessionId) return;
-                loadSVImage(loc, 1);
-            };
             
-            if (!isHost) {
-                if (peerConnection && peerConnection.open) {
-                    sendPeerMessage({ type: 'IMAGE_LOAD_ERROR', round: currentRound });
-                }
+            if (peerConnection && peerConnection.open) {
+                sendPeerMessage({ type: 'IMAGE_LOAD_ERROR', round: currentRound });
             }
         }
       }
@@ -1875,7 +1113,9 @@
       if (sessionId !== currentGameSessionId) return;
 
       try {
-          const moveToPromise = mlyViewer.moveTo(imageId);
+          const moveToPromise = mlyViewer.moveTo(imageId).then(() => {
+              try { if (mlyViewer.setCenter) mlyViewer.setCenter([0.5, 0.5]); } catch(e) {}
+          });
           const timeoutPromise = new Promise((_, reject) => 
               setTimeout(() => reject(new Error("Timeout loading image")), 15000)
           );
@@ -1996,17 +1236,39 @@
 
       updateHUD();
       showScreen('result');
+      checkNonPopup(myGuessTemp.distKm, myGuessTemp.score, true);
+      checkHackmapPopup(myGuessTemp.distKm);
       initMultiplayerResultMap(myGuessTemp, oppGuessData);
   }
 
   function calcScore(distKm) {
+    if (distKm <= 0.05) return MAX_SCORE; // Dưới 50m được tuyệt đối 5000 điểm
+
     const max = CITY_MAX_DISTANCES[currentMode] || 50;
     if (distKm >= max) return 0;
     
     // Sử dụng công thức đường cong dốc hơn (bậc 4) để phạt nặng sai số
-    // Ở phạm vi 50km: sai số 10km -> (40/50)^4 * 5000 = ~2048 điểm
     let score = MAX_SCORE * Math.pow((max - distKm) / max, 4);
     return Math.round(score);
+  }
+
+  function animateScoreCount(element, start, end, duration) {
+    if (!element) return;
+    let startTimestamp = null;
+    const step = (timestamp) => {
+      if (!startTimestamp) startTimestamp = timestamp;
+      const progress = Math.min((timestamp - startTimestamp) / duration, 1);
+      // easeOutExpo
+      const easeProgress = progress === 1 ? 1 : 1 - Math.pow(2, -10 * progress);
+      const currentScore = Math.floor(easeProgress * (end - start) + start);
+      element.textContent = currentScore.toLocaleString();
+      if (progress < 1) {
+        window.requestAnimationFrame(step);
+      } else {
+        element.textContent = end.toLocaleString();
+      }
+    };
+    window.requestAnimationFrame(step);
   }
 
   function showResult(distKm, score, guessLL, actualLL) {
@@ -2015,8 +1277,8 @@
     document.querySelector('.result-stats').style.display = 'flex';
     $('btn-next').style.display = 'block';
 
-    $('result-score').textContent    = score.toLocaleString();
-    $('result-score2').textContent   = score.toLocaleString();
+    animateScoreCount($('result-score'), 0, score, 1500);
+    animateScoreCount($('result-score2'), 0, score, 1500);
     $('result-landmark-name').textContent = currentLoc.name;
     $('result-landmark-desc').textContent = currentLoc.desc || '';
 
@@ -2036,7 +1298,9 @@
         $('result-title').textContent = title;
         $('btn-next-text').textContent = endlessLives <= 0 ? 'Xem kết quả' : 'Tiếp tục ♾️ →';
     } else {
-        if (score >= 2500) {
+        if (score >= 4500) {
+            if (typeof playWinFanfare === 'function') playWinFanfare();
+        } else if (score >= 1000) {
             playCorrect();
         } else {
             playIncorrect();
@@ -2052,8 +1316,44 @@
     updateHUD();
     showScreen('result');
 
+    checkNonPopup(distKm, score, false);
+    checkHackmapPopup(distKm);
+
     // Build the result map showing guess vs actual
     initResultMap(guessLL, actualLL, distKm);
+  }
+
+  function checkNonPopup(distKm, score, isMulti) {
+    let show = false;
+    if (isMulti) {
+        if (score === 0) show = true;
+    } else if (isEndless) {
+        if (score < ENDLESS_STREAK_THRESHOLD) show = true;
+    } else {
+        if (score === 0) show = true;
+    }
+
+    if (show) {
+        const nonPopup = $('non-popup');
+        if (nonPopup) {
+            nonPopup.classList.add('show');
+            setTimeout(() => {
+                nonPopup.classList.remove('show');
+            }, 1500);
+        }
+    }
+  }
+
+  function checkHackmapPopup(distKm) {
+    if (distKm <= 0.05) {
+        const popup = $('hackmap-popup');
+        if (popup) {
+            popup.classList.add('show');
+            setTimeout(() => {
+                popup.classList.remove('show');
+            }, 4000);
+        }
+    }
   }
 
   function initResultMap(guessLL, actualLL, distKm) {
@@ -2147,7 +1447,7 @@
     stopTimer();
     playWinFanfare();
     if (isMultiplayer) {
-        $('final-total-score').textContent = myMultiScore.toLocaleString();
+        animateScoreCount($('final-total-score'), 0, myMultiScore, 2000);
         let finalStatus = '';
         if (myMultiScore > oppMultiScore) finalStatus = '🏆 CHÚC MỪNG BẠN ĐÃ CHIẾN THẮNG!';
         else if (myMultiScore < oppMultiScore) finalStatus = '💀 BẠN ĐÃ THUA CUỘC!';
@@ -2157,14 +1457,14 @@
         el.btnMultiRestart.style.display = 'block';
         saveGameResult(myMultiScore, 'Multiplayer');
     } else if (isEndless) {
-        $('final-total-score').textContent = totalScore.toLocaleString();
+        animateScoreCount($('final-total-score'), 0, totalScore, 2000);
         $('final-rating').textContent =
             `♾️ ${endlessRounds} vòng • Best Streak 🔥${endlessBestStreak} • Tổng điểm: ${totalScore.toLocaleString()}`;
         $('btn-restart').textContent = 'Chơi lại';
         el.btnMultiRestart.style.display = 'none';
         saveGameResult(totalScore, 'Endless_' + currentMode);
     } else {
-        $('final-total-score').textContent = totalScore.toLocaleString();
+        animateScoreCount($('final-total-score'), 0, totalScore, 2000);
         const pct = totalScore / (MAX_SCORE * TOTAL_ROUNDS);
         let rating;
         if (pct >= 0.90) rating = '🥇 Bạn là chuyên gia địa lý Việt Nam!';
@@ -2235,94 +1535,3 @@
     }
   }
 
-  // ── Leaflet Guess Map ─────────────────────────────────────────────────────
-  function initGuessMap() {
-    if (guessMap) {
-      if (guessMarker) { guessMap.removeLayer(guessMarker); guessMarker = null; }
-      if (resultLine)  { guessMap.removeLayer(resultLine);  resultLine  = null; }
-      guessMap.setView([16.0, 106.5], 5);
-      return;
-    }
-
-    guessMap = L.map('map', {
-      center: [16.0, 106.5],
-      zoom: 5,
-      zoomControl: false,
-      attributionControl: false,
-    });
-
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-      maxZoom: 19,
-    }).addTo(guessMap);
-
-    L.control.zoom({ position: 'bottomright' }).addTo(guessMap);
-
-    // Setup ResizeObserver for guessMap
-    if (window.ResizeObserver) {
-      const resizeObserver = new ResizeObserver(() => {
-        guessMap.invalidateSize();
-      });
-      const mapEl = document.getElementById('map');
-      if (mapEl) {
-        resizeObserver.observe(mapEl);
-      }
-    }
-
-    // Protect active state during dragging
-    guessMap.on('dragstart', () => {
-      isMapInteracting = true;
-      const mapContainer = $('map-container');
-      if (mapContainer) {
-        mapContainer.classList.add('active');
-      }
-    });
-
-    guessMap.on('dragend', () => {
-      isMapInteracting = false;
-      const mapContainer = $('map-container');
-      if (mapContainer) {
-        const hasHover = window.matchMedia('(hover: hover)').matches;
-        if (hasHover && !mapContainer.matches(':hover')) {
-          mapContainer.classList.remove('active');
-        }
-      }
-    });
-
-    guessMap.on('click', e => {
-      if (hasGuessed || !gameActive) return;
-      if (el.loadingView.style.display === 'flex') return; // Prevent blind guessing while loading
-
-      if (guessMarker) guessMap.removeLayer(guessMarker);
-      guessMarker = L.marker(e.latlng, {
-        icon: L.divIcon({
-          className: '', iconSize: [32, 32], iconAnchor: [16, 32],
-          html: '<div class="map-pin guess">🎯</div>',
-        }),
-      }).addTo(guessMap);
-      el.btnGuess.disabled = false;
-      if (window.gsap && el.btnGuess) {
-        gsap.killTweensOf(el.btnGuess);
-        gsap.fromTo(el.btnGuess, 
-          { scale: 1 }, 
-          { scale: 1.05, duration: 0.5, repeat: -1, yoyo: true, ease: "sine.inOut" }
-        );
-      }
-    });
-  }
-
-  // ── Utility ───────────────────────────────────────────────────────────────
-  function shuffle(arr) {
-    for (let i = arr.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [arr[i], arr[j]] = [arr[j], arr[i]];
-    }
-    return arr;
-  }
-
-  function shuffleLocations(pool) {
-    return shuffle(pool);
-  }
-
-  // ── Start ─────────────────────────────────────────────────────────────────
-  document.addEventListener('DOMContentLoaded', init);
-})();

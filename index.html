@@ -10,7 +10,13 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div id="global-bg"></div>
+<div id="global-bg">
+    <div class="particle p1"></div>
+    <div class="particle p2"></div>
+    <div class="particle p3"></div>
+    <div class="particle p4"></div>
+    <div class="particle p5"></div>
+</div>
 <div id="game-container">
 
     <!-- ── Token Setup Screen ── -->
@@ -33,6 +39,7 @@
 
     <!-- ── Start Screen ── -->
     <div id="start-screen" class="overlay active">
+        <button id="btn-tutorial" class="btn-text" style="position: absolute; top: 20px; right: 20px; font-size: 1rem; color: #fff; z-index: 10; font-weight: 600; text-shadow: 0 2px 4px rgba(0,0,0,0.5);">📖 Hướng Dẫn</button>
         <div class="overlay-content start-content">
             <div class="logo-container">
                 <div class="vietnam-flag-glow"></div>
@@ -48,12 +55,12 @@
                         <button class="btn-mode" data-city="Hanoi">🏛️ Hà Nội</button>
                         <button class="btn-mode" data-city="Saigon">🌆 Sài Gòn</button>
                         <button class="btn-mode" data-city="DaNang">🌉 Đà Nẵng</button>
-                        <button class="btn-mode" data-city="Mixed">🔀 Toàn Quốc</button>
+                        <button class="btn-mode" data-city="Mixed">🔀 Xuyên Việt</button>
                     </div>
                 </div>
 
                 <div class="play-card multi-card">
-                    <h3>⚔️ Đối Kháng</h3>
+                    <h3>⚔️ VERSUS MODE</h3>
                     <p>1vs1 thời gian thực với bạn bè</p>
                     <button id="btn-show-multiplayer" class="btn-primary btn-play-multi">Tạo Phòng</button>
                 </div>
@@ -69,7 +76,7 @@
     <!-- ── Multiplayer Lobby ── -->
     <div id="lobby-screen" class="overlay">
         <div class="overlay-content" style="max-width:400px;">
-            <h2>⚔️ Đối Kháng</h2>
+            <h2>⚔️ VERSUS MODE</h2>
             
             <div id="lobby-menu">
                 <p>Mời bạn bè cùng chơi</p>
@@ -112,12 +119,12 @@
                 </div>
                 
                 <div id="host-controls" style="display:none; margin-top:20px;">
-                    <p style="margin-bottom:10px;">Đối thủ đã vào! Chọn khu vực để bắt đầu:</p>
+                    <p style="margin-bottom:10px; white-space: nowrap; font-size: 0.9rem; overflow-x: auto;">Đối thủ đã vào! Chọn khu vực để bắt đầu:</p>
                     <div class="mode-selection" style="justify-content:center;">
                         <button class="btn-mode host-mode" data-city="Hanoi">🏛️ Hà Nội</button>
                         <button class="btn-mode host-mode" data-city="Saigon">🌆 Sài Gòn</button>
                         <button class="btn-mode host-mode" data-city="DaNang">🌉 Đà Nẵng</button>
-                        <button class="btn-mode host-mode" data-city="Mixed">🔀 Toàn Quốc</button>
+                        <button class="btn-mode host-mode" data-city="Mixed">🔀 Xuyên Việt</button>
                     </div>
                 </div>
                 <button id="btn-host-cancel" class="btn-text" style="margin-top:20px;">Hủy phòng</button>
@@ -154,6 +161,27 @@
             <span style="color:#F87171;">Địch: <span id="hud-opp-score">0</span></span>
         </div>
         <button id="btn-quit" class="btn-icon" title="Thoát game">✖</button>
+    </div>
+    
+    <div style="position: fixed; top: 80px; right: 15px; display: flex; flex-direction: column; gap: 10px; z-index: 50;">
+        <button id="btn-skill-mustard" class="btn-icon" title="Ọe (Làm mờ màn hình đối thủ)!" style="display:none; background:#EAB308; color:#000; font-weight:700; padding:0 15px; font-size:1rem; border-radius:20px; white-space:nowrap; width: max-content;">🤢 Ọe</button>
+        <button id="btn-skill-dizzy" class="btn-icon" title="Rối loạn tiền đình (Xoay màn hình đối thủ)!" style="display:none; background:#8B5CF6; color:#fff; font-weight:700; padding:0 15px; font-size:1rem; border-radius:20px; white-space:nowrap; width: max-content;">😵‍💫 Tiền đình</button>
+        <button id="btn-skill-tunnel" class="btn-icon" title="Ếch ngồi đáy giếng (Che mắt đối thủ)!" style="display:none; background:#111827; color:#fff; border: 1px solid #4B5563; font-weight:700; padding:0 15px; font-size:1rem; border-radius:20px; white-space:nowrap; width: max-content;">🐸 Đáy giếng</button>
+    </div>
+
+    <!-- Confirm Quit Modal -->
+    <div id="confirm-quit-screen">
+        <div class="confirm-quit-box">
+            <h3 style="font-size: 1.3rem; color: #fff; margin-bottom: 10px; font-weight: 600; text-wrap: balance;">⚠️ Bạn có chắc muốn <strong>thoát game</strong> không?</h3>
+            <p style="font-size: 0.95rem; color: #a3b8f0; margin-bottom: 24px; line-height: 1.5; white-space: nowrap;">Tiến độ vòng đấu hiện tại sẽ bị mất.</p>
+            <div class="confirm-quit-actions" style="display:flex; flex-direction:column; gap:10px;">
+                <div style="display:flex; gap:10px;">
+                    <button id="btn-confirm-quit-cancel" class="btn-cancel" style="flex:1; white-space: nowrap;">← Tiếp tục chơi</button>
+                    <button id="btn-confirm-quit-yes" class="btn-danger" style="flex:1; white-space: nowrap;">🚪 Thoát</button>
+                </div>
+                <button id="btn-confirm-quit-lobby" class="btn-primary" style="display:none; width:100%; max-width:none; margin-top:10px; font-size:1rem; padding:10px 24px; border-radius:10px; text-transform:none;">⚙️ Về sảnh (Chỉnh cài đặt)</button>
+            </div>
+        </div>
     </div>
 
     <!-- ── Google Street View Viewer ── -->
@@ -241,11 +269,50 @@
 
 </div>
 
+<!-- ── Tutorial Modal ── -->
+<div id="tutorial-modal" class="overlay" style="display: none; z-index: 9999;">
+    <div class="overlay-content" style="max-width: 730px; text-align: justify; padding: 30px;">
+        <h2 style="text-align: center; margin-bottom: 20px; font-family: var(--font-heading);">📖 Hướng dẫn chơi</h2>
+        
+        <div style="margin-bottom: 20px;">
+            <h3 style="color: var(--accent-light); margin-bottom: 8px; font-size: 1.1rem;">📷 1. Bí kíp lết đường</h3>
+            <ul style="padding-left: 20px; line-height: 1.6; color: var(--text-dim); font-size: 0.95rem;">
+                <li style="margin-bottom: 5px;"><strong>Ảnh 360 độ:</strong> Cứ dùng chuột xoay và bấm vào các mũi tên mờ mờ trên đường như lúc bạn xài Google Maps đi soi nhà người yêu cũ vậy. Dễ ẹc!</li>
+                <li><strong>Ảnh tĩnh:</strong> Lỡ không thấy mũi tên? Nhìn góc trên bên TRÁI, có nút <strong>Play (▶)</strong>. Bấm vào để ảnh tự chạy, một lúc sau mũi tên điều khiển sẽ hiện ở phía dưới màn hình. Khi đó bạn có thể bấm <strong>Stop (⏹)</strong> chạy ảnh tĩnh.</li>
+            </ul>
+        </div>
+        
+        <div style="margin-bottom: 25px;">
+            <h3 style="color: var(--accent-light); margin-bottom: 8px; font-size: 1.1rem;">💔 2. Chế độ Vô Tận</h3>
+            <ul style="padding-left: 20px; line-height: 1.6; color: var(--text-dim); font-size: 0.95rem;">
+                <li style="margin-bottom: 5px;">Mỗi lần đoán mà dưới <strong>3000đ</strong> thì trừ 1 mạng (♥️)</li>
+                <li>Đời người có 3 mạng, mất hết thì... cút về sảnh chính! Chúc bạn chơi game vui vẻ!</li>
+            </ul>
+        </div>
+
+        <button id="btn-close-tutorial" class="btn-primary" style="width: 100%;">Đã hiểu!</button>
+    </div>
+</div>
+
+<div id="non-popup" class="non-popup">NON 🤡</div>
+<div id="hackmap-popup" class="hackmap-popup">HACKMAP 🕵️‍♂️</div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js" integrity="sha384-g4NTh/Iv5PPU4xPyhEWqPcwtNXOvdaDI8LLnyYfyNZOjKJeYQyjzQ9X5275eBjpt" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/mapillary-js@4.1.2/dist/mapillary.js" integrity="sha384-1AlAxcgdzKreJ5f2K+t7SW3pEE0ek9u3lUwlZXX+v+FtEk1tWSg6DBVLb3ZKhpB+" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js" integrity="sha384-PMNj1TmCgXfW24/rfIyxYSAWwj2mffkMfguUWv08iNFcy0kTC0JN7E/tE+pJ7+fa" crossorigin="anonymous"></script>
 <script src="locations.js"></script>
-<script src="game.js"></script>
+<script src="01_logger.js"></script>
+<script src="02_config.js"></script>
+<script src="03_state.js"></script>
+<script src="04_sound.js"></script>
+<script src="05_timer.js"></script>
+<script src="06_dom.js"></script>
+<script src="07_boot.js"></script>
+<script src="08_events.js"></script>
+<script src="09_flow.js"></script>
+<script src="10_leaflet.js"></script>
+<script src="11_util.js"></script>
+<script src="12_start.js"></script>
 </body>
 </html>
