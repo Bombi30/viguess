@@ -552,22 +552,42 @@
       if (startSection) startSection.style.display = 'block';
       if (finalSection) finalSection.style.display = 'block';
       
-      let html = '';
-      history.forEach((game, idx) => {
-        html += `
-          <div class="leaderboard-item">
-            <span class="leaderboard-rank">#${idx + 1}</span>
-            <span class="leaderboard-mode">${escapeHTML(getModeDisplayName(game.mode))}</span>
-            <span class="leaderboard-score">${escapeHTML(game.score.toLocaleString())}</span>
-            <span class="leaderboard-date">${escapeHTML(game.date)}</span>
-          </div>
-        `;
-      });
-      
       const startList = $('start-leaderboard-list');
       const finalList = $('final-leaderboard-list');
-      if (startList) startList.innerHTML = html;
-      if (finalList) finalList.innerHTML = html;
+      if (startList) startList.textContent = '';
+      if (finalList) finalList.textContent = '';
+
+      history.forEach((game, idx) => {
+        const createItem = () => {
+          const div = document.createElement('div');
+          div.className = 'leaderboard-item';
+          
+          const rank = document.createElement('span');
+          rank.className = 'leaderboard-rank';
+          rank.textContent = '#' + (idx + 1);
+          
+          const mode = document.createElement('span');
+          mode.className = 'leaderboard-mode';
+          mode.textContent = getModeDisplayName(game.mode);
+          
+          const score = document.createElement('span');
+          score.className = 'leaderboard-score';
+          score.textContent = game.score.toLocaleString();
+          
+          const date = document.createElement('span');
+          date.className = 'leaderboard-date';
+          date.textContent = game.date;
+          
+          div.appendChild(rank);
+          div.appendChild(mode);
+          div.appendChild(score);
+          div.appendChild(date);
+          return div;
+        };
+        
+        if (startList) startList.appendChild(createItem());
+        if (finalList) finalList.appendChild(createItem());
+      });
     } catch (e) {
       console.error("Failed to render leaderboards:", e);
     }

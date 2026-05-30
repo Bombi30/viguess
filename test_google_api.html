@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Công cụ test Google Maps API Key</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background: #1e1e2f; color: white; }
+        .container { max-width: 600px; margin: 0 auto; background: #2a2a40; padding: 20px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
+        input[type="text"] { width: 100%; padding: 12px; margin: 10px 0; border-radius: 5px; border: none; font-size: 16px; box-sizing: border-box; }
+        button { background: #00ff88; color: #000; font-weight: bold; padding: 12px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; width: 100%; }
+        button:hover { background: #00cc6a; }
+        #pano { width: 100%; height: 350px; margin-top: 20px; background: #111; border-radius: 5px; display: none; }
+        .status { margin-top: 15px; font-weight: bold; text-align: center; }
+        .success { color: #00ff88; }
+        .error { color: #ff4444; }
+        .warning { color: #ffcc00; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>Kiểm tra Google Street View API</h2>
+    <p>Nhập API Key của bạn vào bên dưới để kiểm tra xem thẻ và tài khoản Google Cloud đã kích hoạt thành công chưa.</p>
+    
+    <input type="text" id="apiKey" placeholder="Dán API Key (Bắt đầu bằng AIza...)">
+    <button onclick="testAPI()">Kiểm tra ngay</button>
+
+    <div id="statusMsg" class="status"></div>
+    <div id="pano"></div>
+</div>
+
+<script>
+    // Hàm này được Google gọi nếu API Key bị lỗi Billing hoặc Auth
+    window.gm_authFailure = function() {
+        const msg = document.getElementById('statusMsg');
+        msg.innerHTML = "❌ API Key không hợp lệ hoặc Tài khoản chưa liên kết Thẻ thanh toán (Billing)!";
+        msg.className = "status error";
+    };
+
+    function testAPI() {
+        const key = document.getElementById('apiKey').value.trim();
+        const msg = document.getElementById('statusMsg');
+        const panoDiv = document.getElementById('pano');
+
+        if (!key || !key.startsWith('AIza')) {
+            msg.innerHTML = "⚠️ Vui lòng nhập API Key hợp lệ (bắt đầu bằng AIza...)";
+            msg.className = "status warning";
+            return;
+        }
+
+        msg.innerHTML = "⏳ Đang kết nối đến Google Maps...";
+        msg.className = "status warning";
+        panoDiv.style.display = 'block';
+        panoDiv.innerHTML = '';
+
+        // Xóa script cũ nếu có
+        const oldScript = document.getElementById('gmap-script');
+        if (oldScript) oldScript.remove();
+
+        // Tải thư viện Google Maps
+        const script = document.createElement('script');
+        script.id = 'gmap-script';
+        script.src = `https://maps.googleapis.com/maps/api/js?key=${key}&callback=initPano`;
+        script.async = true;
+        script.defer = true;
+        
+        script.onerror = function() {
+            msg.innerHTML = "❌ Lỗi mạng hoặc Google chặn kết nối.";
+            msg.className = "status error";
+        };
+
+        window.initPano = function() {
+            msg.innerHTML = "✅ Tải thư viện thành công! Đang lấy ảnh 360 độ Nhà Thờ Đức Bà...";
+            msg.className = "status success";
+
+            // Tọa độ Nhà thờ Đức Bà - Sài Gòn
+            const testLocation = { lat: 10.7798, lng: 106.6990 };
+
+            try {
+                const svService = new google.maps.StreetViewService();
+                svService.getPanorama({ location: testLocation, radius: 50 }, (data, status) => {
+                    if (status === 'OK') {
+                        new google.maps.StreetViewPanorama(panoDiv, {
+                            position: data.location.latLng,
+                            pov: { heading: 165, pitch: 0 },
+                            zoom: 1,
+                            disableDefaultUI: false
+                        });
+                        msg.innerHTML = "🌟 HOẠT ĐỘNG HOÀN HẢO! Lên hình 360 độ thành công.";
+                    } else {
+                        msg.innerHTML = `⚠️ Thư viện chạy được nhưng không lấy được ảnh (Trạng thái: ${status})`;
+                        msg.className = "status warning";
+                    }
+                });
+            } catch (err) {
+                msg.innerHTML = "❌ Lỗi khởi tạo bản đồ: " + err.message;
+                msg.className = "status error";
+            }
+        };
+
+        document.head.appendChild(script);
+    }
+</script>
+
+</body>
+</html>
